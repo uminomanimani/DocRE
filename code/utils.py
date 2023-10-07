@@ -1,7 +1,9 @@
 import numpy as np
 import json
 import os
+import torch
 from torch.utils.data import Dataset
+from transformers import BertModel
 
 
 def load_data(prefix, data_path='./prepro_data'):
@@ -23,9 +25,12 @@ def load_data(prefix, data_path='./prepro_data'):
 
     return data_word, data_pos, data_ner, data_char, file
 
-def encode(page : list):
-
-    pass
+def encode(pathBert : str, replacedWords : list, headMentionPos : list, tailMentionPos : list):
+    bert = BertModel.from_pretrained(pathBert)
+    for param in bert.parameters():
+        param.requires_grad = False
+    _replacedWords = torch.Tensor(replacedWords)
+        
 
 class DocREDataset(Dataset):
     def __init__(self, prefix : str, data_path : str):
@@ -36,29 +41,57 @@ class DocREDataset(Dataset):
         for i in range(l):
             words = self.data_word[i] #这篇文档中单词映射到token的列表
             labels = self.file[i]['labels'] #这篇文档中的标签
-            num_entity = len(self.file[i]['vertexSet']) #这篇文档中实体的数量
-            for x in num_entity:
-                for y in num_entity:
+            numEntity = len(self.file[i]['vertexSet']) #这篇文档中实体的数量
+            segmentID = []
+            for j in range(1, len(self.file[i]['Ls'])):
+                segmentID = segmentID + [j - 1] * self.file[i]['Ls'][j]
+            segmentID = segmentID + (1024 - len(segmentID)) * [0]
+
+            for x in numEntity:
+                for y in numEntity:
                     if x != y:
-                        entity_pos = []
-                        head_entity = self.file[i]['vertexSet'][x]
-                        tail_entity = self.file[i]['vertexSet'][y]
-                        for head_entity_mention in head_entity:
-                            sent_id = head_entity_mention['sent_id']
-                            start = head_entity_mention['pos'][0]
-                            end = head_entity_mention['pos'][1]
-                            entity_pos.append([start + self.file[i]['Ls'][sent_id], end + self.file[i]['Ls'][sent_id], 'h'])
-                        for tail_entity_mention in tail_entity:
-                            sent_id = tail_entity_mention['sent_id']
-                            start = tail_entity_mention['pos'][0]
-                            end = tail_entity_mention['pos'][1]
-                            entity_pos.append([start + self.file[i]['Ls'][sent_id], end + self.file[i]['Ls'][sent_id], 't'])
+                        entityPos = []
+                        headEntity = self.file[i]['vertexSet'][x]
+                        tailEntity = self.file[i]['vertexSet'][y]
+                        for headEntityMention in headEntity:
+                            sent_id = headEntityMention['sent_id']
+                            start = headEntityMention['pos'][0]
+                            end = headEntityMention['pos'][1]
+                            entityPos.append([start + self.file[i]['Ls'][sent_id], end + self.file[i]['Ls'][sent_id], 'h'])
+                        for tailEntityMention in tailEntity:
+                            sent_id = tailEntityMention['sent_id']
+                            start = tailEntityMention['pos'][0]
+                            end = tailEntityMention['pos'][1]
+                            entityPos.append([start + self.file[i]['Ls'][sent_id], end + self.file[i]['Ls'][sent_id], 't'])
+                        
+                        replacedWords, replacedSegmentID, headMentionPos, tailMentionPos = self.replaceMention(words=words, entityPos=entityPos, segmentID=segmentID)
+
         pass
 
-    def replaceMention(self, words, entity_pos):
-        sorted_pos = sorted(entity_pos, key=lambda x : x[0])
+    def replaceMention(self, words, entityPos, segmentID):
+        sorted_pos = sorted(entityPos, key=lambda x : x[0])
+        replacedSegmentID = []
+        replacedWords = []
+        headMentionPos = []
+        tailMentionPos = []
+        lastEnd = 0
+        for start, end, s in sorted_pos:
+            replacedWords += (words[lastEnd:start] + [-1 if s == 'h' else -2])
+            replacedSegmentID += ((segmentID[lastEnd:start]) + segmentID[lastEnd])
+            lastEnd = end
         
-        pass
+        replacedWords = replacedWords + words[lastEnd:]
+
+        for i in range(len(replacedWords)):
+            if replacedWords[i] == -1:
+                replacedWords[i] = 20
+                headMentionPos.append(i)
+            if replacedWords[i] == -2:
+                replacedWords[i] = 20
+                tailMentionPos.append(i)
+        
+        return replacedWords, replacedSegmentID, headMentionPos, tailMentionPos
+        
 
 if __name__ == '__main__':
     d = DocREDataset('dev_train', './prepro_data')
