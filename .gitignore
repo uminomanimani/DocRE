@@ -1,6 +1,10 @@
+.vscode/
 data/*.json
 code/prepro_data/*.json
 code/prepro_data/*.npy
+code/test.py
+
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
