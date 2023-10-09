@@ -25,11 +25,13 @@ def load_data(prefix, data_path='./prepro_data'):
 
     return data_word, data_pos, data_ner, data_char, file
 
-def encode(pathBert : str, replacedWords : list, headMentionPos : list, tailMentionPos : list):
+def encode(pathBert : str, replacedWords, replacedSegmentID, headMentionPos, tailMentionPos):
     bert = BertModel.from_pretrained(pathBert)
     for param in bert.parameters():
         param.requires_grad = False
-    _replacedWords = torch.Tensor(replacedWords)
+    lenPage = np.argwhere(replacedWords == 0)[0][0] if len(np.argwhere(replacedWords == 0)) > 0 else 1024
+    mask = np.array([1] * lenPage + (1024 - lenPage) * [0]).astype(np.int32)
+    pass
         
 
 class DocREDataset(Dataset):
@@ -40,15 +42,16 @@ class DocREDataset(Dataset):
         
         for i in range(l):
             words = self.data_word[i] #这篇文档中单词映射到token的列表
+            lenWords = self.file[i]['Ls'][-1]
             labels = self.file[i]['labels'] #这篇文档中的标签
             numEntity = len(self.file[i]['vertexSet']) #这篇文档中实体的数量
             segmentID = []
             for j in range(1, len(self.file[i]['Ls'])):
-                segmentID = segmentID + [j - 1] * self.file[i]['Ls'][j]
-            segmentID = segmentID + (1024 - len(segmentID)) * [0]
+                segmentID = segmentID + [j - 1] * (self.file[i]['Ls'][j] - self.file[i]['Ls'][j - 1])
+            segmentID = segmentID + (1024 - len(segmentID)) * [-1]
 
-            for x in numEntity:
-                for y in numEntity:
+            for x in range(numEntity):
+                for y in range(numEntity):
                     if x != y:
                         entityPos = []
                         headEntity = self.file[i]['vertexSet'][x]
@@ -57,38 +60,51 @@ class DocREDataset(Dataset):
                             sent_id = headEntityMention['sent_id']
                             start = headEntityMention['pos'][0]
                             end = headEntityMention['pos'][1]
-                            entityPos.append([start + self.file[i]['Ls'][sent_id], end + self.file[i]['Ls'][sent_id], 'h'])
+                            entityPos.append([start, end, 'h'])
                         for tailEntityMention in tailEntity:
                             sent_id = tailEntityMention['sent_id']
                             start = tailEntityMention['pos'][0]
                             end = tailEntityMention['pos'][1]
-                            entityPos.append([start + self.file[i]['Ls'][sent_id], end + self.file[i]['Ls'][sent_id], 't'])
+                            entityPos.append([start, end, 't'])
                         
                         replacedWords, replacedSegmentID, headMentionPos, tailMentionPos = self.replaceMention(words=words, entityPos=entityPos, segmentID=segmentID)
+                        representation = encode('../pretrained/', replacedWords=replacedWords, replacedSegmentID=replacedSegmentID, 
+                                                headMentionPos=headMentionPos, tailMentionPos=tailMentionPos)
 
         pass
 
     def replaceMention(self, words, entityPos, segmentID):
-        sorted_pos = sorted(entityPos, key=lambda x : x[0])
-        replacedSegmentID = []
-        replacedWords = []
-        headMentionPos = []
-        tailMentionPos = []
+        sortedPos = sorted(entityPos, key=lambda x : x[0])
+        replacedSegmentID = np.array([]).astype(np.int32)
+        replacedWords = np.array([]).astype(np.int32)
+        headMentionPos = np.array([]).astype(np.int32)
+        tailMentionPos = np.array([]).astype(np.int32)
+        print(replacedWords.shape)
+        print(words.shape)
         lastEnd = 0
-        for start, end, s in sorted_pos:
-            replacedWords += (words[lastEnd:start] + [-1 if s == 'h' else -2])
-            replacedSegmentID += ((segmentID[lastEnd:start]) + segmentID[lastEnd])
+        for start, end, s in sortedPos:
+            # replacedWords += words[lastEnd:start]
+            replacedWords = np.concatenate((replacedWords, words[lastEnd:start])).astype(np.int32)
+            #  + [-1 if s == 'h' else -2])
+            replacedWords = np.append(replacedWords, -1 if s == 'h' else -2).astype(np.int32)
+            # replacedSegmentID += (segmentID[lastEnd:start] + [segmentID[lastEnd]])
+            replacedSegmentID = np.concatenate((replacedSegmentID, segmentID[lastEnd:start])).astype(np.int32)
+            replacedSegmentID = np.append(replacedSegmentID, segmentID[start]).astype(np.int32)
             lastEnd = end
         
-        replacedWords = replacedWords + words[lastEnd:]
+        replacedWords = np.concatenate((replacedWords, words[lastEnd:])).astype(np.int32)
+        replacedSegmentID = np.concatenate((replacedSegmentID, segmentID[lastEnd:])).astype(np.int32)
+
+        replacedWords = np.pad(replacedWords, (0, 1024 - len(replacedWords)), mode='constant', constant_values=0)
+        replacedSegmentID = np.pad(replacedSegmentID,  (0, 1024 - len(replacedSegmentID)), mode='constant', constant_values=0)
 
         for i in range(len(replacedWords)):
             if replacedWords[i] == -1:
                 replacedWords[i] = 20
-                headMentionPos.append(i)
+                headMentionPos = np.append(headMentionPos, i)
             if replacedWords[i] == -2:
                 replacedWords[i] = 20
-                tailMentionPos.append(i)
+                tailMentionPos = np.append(tailMentionPos, i)
         
         return replacedWords, replacedSegmentID, headMentionPos, tailMentionPos
         

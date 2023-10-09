@@ -3,6 +3,8 @@ data/*.json
 code/prepro_data/*.json
 code/prepro_data/*.npy
 code/test.py
+pretrained/*
+!pretrained/.gitkeep
 
 
 # Byte-compiled / optimized / DLL files
