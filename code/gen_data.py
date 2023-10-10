@@ -159,7 +159,7 @@ def init(data_file_name, rel2id, max_length = 512, is_training = True, suffix=''
                 if word in word2id:
                     sen_word[i][j] = word2id[word]
                 else:
-                    sen_word[i][j] = word2id['UNK']
+                    sen_word[i][j] = word2id['[UNK]']
 
                 for c_idx, k in enumerate(list(word)):
                     if c_idx>=char_limit:
@@ -167,7 +167,7 @@ def init(data_file_name, rel2id, max_length = 512, is_training = True, suffix=''
                     sen_char[i,j,c_idx] = char2id.get(k, char2id['UNK'])
 
         for j in range(j + 1, max_length):
-            sen_word[i][j] = word2id['BLANK']
+            sen_word[i][j] = word2id['[PAD]']
 
         vertexSet = item['vertexSet']
 
@@ -185,8 +185,8 @@ def init(data_file_name, rel2id, max_length = 512, is_training = True, suffix=''
 
 
 
-init(train_distant_file_name, rel2id, max_length = 1024, is_training = True, suffix='')
-init(train_annotated_file_name, rel2id, max_length = 1024, is_training = False, suffix='_train')
-init(dev_file_name, rel2id, max_length = 1024, is_training = False, suffix='_dev')
-init(test_file_name, rel2id, max_length = 1024, is_training = False, suffix='_test')
+init(train_distant_file_name, rel2id, max_length = 512, is_training = True, suffix='')
+init(train_annotated_file_name, rel2id, max_length = 512, is_training = False, suffix='_train')
+init(dev_file_name, rel2id, max_length = 512, is_training = False, suffix='_dev')
+init(test_file_name, rel2id, max_length = 512, is_training = False, suffix='_test')
 

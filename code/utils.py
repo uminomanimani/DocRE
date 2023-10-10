@@ -25,18 +25,31 @@ def load_data(prefix, data_path='./prepro_data'):
 
     return data_word, data_pos, data_ner, data_char, file
 
-def encode(pathBert : str, replacedWords, replacedSegmentID, headMentionPos, tailMentionPos):
-    bert = BertModel.from_pretrained(pathBert)
-    for param in bert.parameters():
-        param.requires_grad = False
-    lenPage = np.argwhere(replacedWords == 0)[0][0] if len(np.argwhere(replacedWords == 0)) > 0 else 1024
-    mask = np.array([1] * lenPage + (1024 - lenPage) * [0]).astype(np.int32)
+def encode(bert, replacedWords, replacedSegmentID, headMentionPos, tailMentionPos):
+    #bert = BertModel.from_pretrained(pathBert)
+    #for param in bert.parameters():
+    #    param.requires_grad = False
+    lenPage = np.argwhere(replacedWords == 0)[0][0] if len(np.argwhere(replacedWords == 0)) > 0 else 512
+    mask = np.array([1] * lenPage + (512 - lenPage) * [0]).astype(np.int32)
+    replacedWords = torch.from_numpy(replacedWords).unsqueeze(0)
+    replacedSegmentID = torch.from_numpy(replacedSegmentID).unsqueeze(0)
+    mask = torch.from_numpy(mask).unsqueeze(0)
+    print(replacedWords.shape)
+    print(replacedSegmentID.shape)
+    print(mask.shape)
+
+    hiddenStates = bert(input_ids=replacedWords, attention_mask=mask, token_type_ids=replacedSegmentID)
     pass
         
 
 class DocREDataset(Dataset):
-    def __init__(self, prefix : str, data_path : str):
+    def __init__(self, prefix : str, data_path : str, bertPath : str):
         self.data_word, self.data_pos, self.data_ner, self.data_char, self.file = load_data(prefix=prefix, data_path=data_path)
+        
+        self.bert = BertModel.from_pretrained(bertPath)
+        for param in self.bert.parameters():
+            param.requires_grad = False
+
         l = len(self.data_word)
         assert(len(self.data_word) == len(self.data_pos) == len(self.data_ner) == len(self.file))
         
@@ -47,8 +60,8 @@ class DocREDataset(Dataset):
             numEntity = len(self.file[i]['vertexSet']) #这篇文档中实体的数量
             segmentID = []
             for j in range(1, len(self.file[i]['Ls'])):
-                segmentID = segmentID + [j - 1] * (self.file[i]['Ls'][j] - self.file[i]['Ls'][j - 1])
-            segmentID = segmentID + (1024 - len(segmentID)) * [-1]
+                segmentID = segmentID + [0 if (j - 1) % 2 == 0 else 1] * (self.file[i]['Ls'][j] - self.file[i]['Ls'][j - 1])
+            segmentID = segmentID + (512 - len(segmentID)) * [0]
 
             for x in range(numEntity):
                 for y in range(numEntity):
@@ -68,7 +81,7 @@ class DocREDataset(Dataset):
                             entityPos.append([start, end, 't'])
                         
                         replacedWords, replacedSegmentID, headMentionPos, tailMentionPos = self.replaceMention(words=words, entityPos=entityPos, segmentID=segmentID)
-                        representation = encode('../pretrained/', replacedWords=replacedWords, replacedSegmentID=replacedSegmentID, 
+                        representation = encode(bert=self.bert, replacedWords=replacedWords, replacedSegmentID=replacedSegmentID, 
                                                 headMentionPos=headMentionPos, tailMentionPos=tailMentionPos)
 
         pass
@@ -95,8 +108,8 @@ class DocREDataset(Dataset):
         replacedWords = np.concatenate((replacedWords, words[lastEnd:])).astype(np.int32)
         replacedSegmentID = np.concatenate((replacedSegmentID, segmentID[lastEnd:])).astype(np.int32)
 
-        replacedWords = np.pad(replacedWords, (0, 1024 - len(replacedWords)), mode='constant', constant_values=0)
-        replacedSegmentID = np.pad(replacedSegmentID,  (0, 1024 - len(replacedSegmentID)), mode='constant', constant_values=0)
+        replacedWords = np.pad(replacedWords, (0, 512 - len(replacedWords)), mode='constant', constant_values=0)
+        replacedSegmentID = np.pad(replacedSegmentID,  (0, 512 - len(replacedSegmentID)), mode='constant', constant_values=0)
 
         for i in range(len(replacedWords)):
             if replacedWords[i] == -1:
@@ -110,4 +123,4 @@ class DocREDataset(Dataset):
         
 
 if __name__ == '__main__':
-    d = DocREDataset('dev_train', './prepro_data')
+    d = DocREDataset('dev_train', './prepro_data', '../pretrained/')
