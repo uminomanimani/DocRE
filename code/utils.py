@@ -34,12 +34,19 @@ def encode(bert, replacedWords, replacedSegmentID, headMentionPos, tailMentionPo
     replacedWords = torch.from_numpy(replacedWords).unsqueeze(0)
     replacedSegmentID = torch.from_numpy(replacedSegmentID).unsqueeze(0)
     mask = torch.from_numpy(mask).unsqueeze(0)
-    print(replacedWords.shape)
-    print(replacedSegmentID.shape)
-    print(mask.shape)
+    # print(replacedWords.shape)
+    # print(replacedSegmentID.shape)
+    # print(mask.shape)
 
-    hiddenStates = bert(input_ids=replacedWords, attention_mask=mask, token_type_ids=replacedSegmentID)
-    pass
+    hiddenStates = bert(input_ids=replacedWords, attention_mask=mask, token_type_ids=replacedSegmentID)[0]
+    hiddenStates = torch.squeeze(input=hiddenStates, dim=0)
+    headMentionPos = torch.from_numpy(headMentionPos)
+    tailMentionPos = torch.from_numpy(tailMentionPos)
+    headMentionRepresentition = hiddenStates[headMentionPos]
+    tailMentionRepresentation = hiddenStates[tailMentionPos]
+    headEntityRepresentation = torch.logsumexp(headMentionRepresentition, dim=0)
+    tailEntityRepresentation = torch.logsumexp(tailMentionRepresentation, dim=0)
+    return headEntityRepresentation, tailEntityRepresentation
         
 
 class DocREDataset(Dataset):
@@ -52,16 +59,23 @@ class DocREDataset(Dataset):
 
         l = len(self.data_word)
         assert(len(self.data_word) == len(self.data_pos) == len(self.data_ner) == len(self.file))
+
+        self.data = []
         
         for i in range(l):
+            if i == 282:
+                pass
             words = self.data_word[i] #这篇文档中单词映射到token的列表
-            lenWords = self.file[i]['Ls'][-1]
+            # lenWords = self.file[i]['Ls'][-1]
             labels = self.file[i]['labels'] #这篇文档中的标签
             numEntity = len(self.file[i]['vertexSet']) #这篇文档中实体的数量
             segmentID = []
             for j in range(1, len(self.file[i]['Ls'])):
                 segmentID = segmentID + [0 if (j - 1) % 2 == 0 else 1] * (self.file[i]['Ls'][j] - self.file[i]['Ls'][j - 1])
             segmentID = segmentID + (512 - len(segmentID)) * [0]
+
+            # featureMap = torch.Tensor(size=(numEntity, numEntity, 2, 768))
+            pageData = []
 
             for x in range(numEntity):
                 for y in range(numEntity):
@@ -72,6 +86,8 @@ class DocREDataset(Dataset):
                         for headEntityMention in headEntity:
                             sent_id = headEntityMention['sent_id']
                             start = headEntityMention['pos'][0]
+                            if start == 116:
+                                pass
                             end = headEntityMention['pos'][1]
                             entityPos.append([start, end, 'h'])
                         for tailEntityMention in tailEntity:
@@ -81,9 +97,14 @@ class DocREDataset(Dataset):
                             entityPos.append([start, end, 't'])
                         
                         replacedWords, replacedSegmentID, headMentionPos, tailMentionPos = self.replaceMention(words=words, entityPos=entityPos, segmentID=segmentID)
-                        representation = encode(bert=self.bert, replacedWords=replacedWords, replacedSegmentID=replacedSegmentID, 
-                                                headMentionPos=headMentionPos, tailMentionPos=tailMentionPos)
-
+                        pageData.append((replacedWords, replacedSegmentID, headMentionPos, tailMentionPos))
+                        # headEntityRepresentation, tailEntityRepresentation = encode(bert=self.bert, replacedWords=replacedWords, replacedSegmentID=replacedSegmentID, 
+                        #                         headMentionPos=headMentionPos, tailMentionPos=tailMentionPos)
+                        # featureMap[x][y][0] = headEntityRepresentation
+                        # featureMap[x][y][1] = tailEntityRepresentation
+            
+            self.data.append(pageData)
+            print(f'added page {i}')
         pass
 
     def replaceMention(self, words, entityPos, segmentID):
@@ -92,8 +113,8 @@ class DocREDataset(Dataset):
         replacedWords = np.array([]).astype(np.int32)
         headMentionPos = np.array([]).astype(np.int32)
         tailMentionPos = np.array([]).astype(np.int32)
-        print(replacedWords.shape)
-        print(words.shape)
+        # print(replacedWords.shape)
+        # print(words.shape)
         lastEnd = 0
         for start, end, s in sortedPos:
             # replacedWords += words[lastEnd:start]
@@ -120,7 +141,14 @@ class DocREDataset(Dataset):
                 tailMentionPos = np.append(tailMentionPos, i)
         
         return replacedWords, replacedSegmentID, headMentionPos, tailMentionPos
+    
+    def __len__(self):
+        return len(self.data)
+    
+    def __getitem__(self, index):
+        return self.data[index]
         
 
 if __name__ == '__main__':
     d = DocREDataset('dev_train', './prepro_data', '../pretrained/')
+    x = d.__len__()
