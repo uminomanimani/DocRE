@@ -14,7 +14,7 @@ def load_data(prefix, data_path='./prepro_data'):
     data_word = np.load(os.path.join(data_path, prefix+'_word.npy'))
     # data_pos是每个实体在vertexSet中对应的实体的序号，长度为这篇文档中max_length
     data_pos = np.load(os.path.join(data_path, prefix+'_pos.npy'))
-    # data_ner是代表每个word的实体类型通过ner2id映射的列表，长度为512
+    # data_ner是代表每个word的实体类型通过ner2id映射的列表，长度为512/1024
     data_ner = np.load(os.path.join(data_path, prefix+'_ner.npy'))
     # 每个单词的字母通过char2id映射到数字
     data_char = np.load(os.path.join(data_path, prefix+'_char.npy'))
@@ -24,29 +24,6 @@ def load_data(prefix, data_path='./prepro_data'):
     print("Finish reading")
 
     return data_word, data_pos, data_ner, data_char, file
-
-def encode(bert, replacedWords, replacedSegmentID, headMentionPos, tailMentionPos):
-    #bert = BertModel.from_pretrained(pathBert)
-    #for param in bert.parameters():
-    #    param.requires_grad = False
-    lenPage = np.argwhere(replacedWords == 0)[0][0] if len(np.argwhere(replacedWords == 0)) > 0 else 512
-    mask = np.array([1] * lenPage + (1024 - lenPage) * [0]).astype(np.int32)
-    replacedWords = torch.from_numpy(replacedWords).unsqueeze(0)
-    replacedSegmentID = torch.from_numpy(replacedSegmentID).unsqueeze(0)
-    mask = torch.from_numpy(mask).unsqueeze(0)
-    # print(replacedWords.shape)
-    # print(replacedSegmentID.shape)
-    # print(mask.shape)
-
-    hiddenStates = bert(input_ids=replacedWords, attention_mask=mask, token_type_ids=replacedSegmentID)[0]
-    hiddenStates = torch.squeeze(input=hiddenStates, dim=0)
-    headMentionPos = torch.from_numpy(headMentionPos)
-    tailMentionPos = torch.from_numpy(tailMentionPos)
-    headMentionRepresentition = hiddenStates[headMentionPos]
-    tailMentionRepresentation = hiddenStates[tailMentionPos]
-    headEntityRepresentation = torch.logsumexp(headMentionRepresentition, dim=0)
-    tailEntityRepresentation = torch.logsumexp(tailMentionRepresentation, dim=0)
-    return headEntityRepresentation, tailEntityRepresentation
         
 
 class DocREDataset(Dataset):
@@ -66,34 +43,53 @@ class DocREDataset(Dataset):
             words = self.data_word[i] #这篇文档中单词映射到token的列表
             # lenWords = self.file[i]['Ls'][-1]
             labels = self.file[i]['labels'] #这篇文档中的标签
+            naTriple = self.file[i]['na_triple']
             numEntity = len(self.file[i]['vertexSet']) #这篇文档中实体的数量
             segmentID = []
             for j in range(1, len(self.file[i]['Ls'])):
                 segmentID = segmentID + [0 if (j - 1) % 2 == 0 else 1] * (self.file[i]['Ls'][j] - self.file[i]['Ls'][j - 1])
-            segmentID = segmentID + (512 - len(segmentID)) * [0]
+            segmentID = segmentID + (1024 - len(segmentID)) * [0]
+            segmentID = np.array(segmentID).astype(np.int32)
 
-            # featureMap = torch.Tensor(size=(numEntity, numEntity, 2, 768))
             pageData = []
+            triples = []
+
+            for label in labels:
+                triple = [label['h'], label['t'], label['r']]
+                triples.append(triple)
+                pass
 
             for x in range(numEntity):
                 for y in range(numEntity):
                     if x != y:
+                        if [x, y] not in naTriple:
+                            for triple in triples:
+                                if triple[0] == x and triple[1] == y:
+                                    relation = triple[2]
+                        else:
+                            relation = None
+
                         entityPos = []
                         headEntity = self.file[i]['vertexSet'][x]
                         tailEntity = self.file[i]['vertexSet'][y]
                         for headEntityMention in headEntity:
-                            sent_id = headEntityMention['sent_id']
+                            # sent_id = headEntityMention['sent_id']
                             start = headEntityMention['pos'][0]
                             end = headEntityMention['pos'][1]
                             entityPos.append([start, end, 'h'])
                         for tailEntityMention in tailEntity:
-                            sent_id = tailEntityMention['sent_id']
+                            # sent_id = tailEntityMention['sent_id']
                             start = tailEntityMention['pos'][0]
                             end = tailEntityMention['pos'][1]
                             entityPos.append([start, end, 't'])
                         
                         replacedWords, replacedSegmentID, headMentionPos, tailMentionPos = self.replaceMention(words=words, entityPos=entityPos, segmentID=segmentID)
-                        pageData.append((replacedWords, replacedSegmentID, headMentionPos, tailMentionPos))
+                        replacedWords = torch.from_numpy(replacedWords)
+                        replacedSegmentID = torch.from_numpy(replacedSegmentID)
+                        headMentionPos = torch.from_numpy(headMentionPos)
+                        tailMentionPos = torch.from_numpy(tailMentionPos)
+                        # 返回：插入了标记的文档，插入了标记后的段落ID，头实体提及的标记位置，尾实体提及的标记位置，头实体ID，尾实体ID，关系编号
+                        pageData.append((replacedWords, replacedSegmentID, headMentionPos, tailMentionPos, x, y, relation))
                         # headEntityRepresentation, tailEntityRepresentation = encode(bert=self.bert, replacedWords=replacedWords, replacedSegmentID=replacedSegmentID, 
                         #                         headMentionPos=headMentionPos, tailMentionPos=tailMentionPos)
                         # featureMap[x][y][0] = headEntityRepresentation
@@ -149,4 +145,5 @@ class DocREDataset(Dataset):
 
 if __name__ == '__main__':
     d = DocREDataset('dev_train', './prepro_data', '../pretrained/')
-    x = d.__len__()
+    x = d.__getitem__(123)
+    pass
