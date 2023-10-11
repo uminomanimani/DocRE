@@ -185,8 +185,8 @@ def init(data_file_name, rel2id, max_length = 512, is_training = True, suffix=''
 
 
 
-init(train_distant_file_name, rel2id, max_length = 512, is_training = True, suffix='')
-init(train_annotated_file_name, rel2id, max_length = 512, is_training = False, suffix='_train')
-init(dev_file_name, rel2id, max_length = 512, is_training = False, suffix='_dev')
-init(test_file_name, rel2id, max_length = 512, is_training = False, suffix='_test')
+init(train_distant_file_name, rel2id, max_length = 1024, is_training = True, suffix='')
+init(train_annotated_file_name, rel2id, max_length = 1024, is_training = False, suffix='_train')
+init(dev_file_name, rel2id, max_length = 1024, is_training = False, suffix='_dev')
+init(test_file_name, rel2id, max_length = 1024, is_training = False, suffix='_test')
 

@@ -30,7 +30,7 @@ def encode(bert, replacedWords, replacedSegmentID, headMentionPos, tailMentionPo
     #for param in bert.parameters():
     #    param.requires_grad = False
     lenPage = np.argwhere(replacedWords == 0)[0][0] if len(np.argwhere(replacedWords == 0)) > 0 else 512
-    mask = np.array([1] * lenPage + (512 - lenPage) * [0]).astype(np.int32)
+    mask = np.array([1] * lenPage + (1024 - lenPage) * [0]).astype(np.int32)
     replacedWords = torch.from_numpy(replacedWords).unsqueeze(0)
     replacedSegmentID = torch.from_numpy(replacedSegmentID).unsqueeze(0)
     mask = torch.from_numpy(mask).unsqueeze(0)
@@ -63,8 +63,6 @@ class DocREDataset(Dataset):
         self.data = []
         
         for i in range(l):
-            if i == 282:
-                pass
             words = self.data_word[i] #这篇文档中单词映射到token的列表
             # lenWords = self.file[i]['Ls'][-1]
             labels = self.file[i]['labels'] #这篇文档中的标签
@@ -86,8 +84,6 @@ class DocREDataset(Dataset):
                         for headEntityMention in headEntity:
                             sent_id = headEntityMention['sent_id']
                             start = headEntityMention['pos'][0]
-                            if start == 116:
-                                pass
                             end = headEntityMention['pos'][1]
                             entityPos.append([start, end, 'h'])
                         for tailEntityMention in tailEntity:
@@ -113,33 +109,35 @@ class DocREDataset(Dataset):
         replacedWords = np.array([]).astype(np.int32)
         headMentionPos = np.array([]).astype(np.int32)
         tailMentionPos = np.array([]).astype(np.int32)
-        # print(replacedWords.shape)
-        # print(words.shape)
         lastEnd = 0
-        for start, end, s in sortedPos:
-            # replacedWords += words[lastEnd:start]
-            replacedWords = np.concatenate((replacedWords, words[lastEnd:start])).astype(np.int32)
-            #  + [-1 if s == 'h' else -2])
-            replacedWords = np.append(replacedWords, -1 if s == 'h' else -2).astype(np.int32)
-            # replacedSegmentID += (segmentID[lastEnd:start] + [segmentID[lastEnd]])
-            replacedSegmentID = np.concatenate((replacedSegmentID, segmentID[lastEnd:start])).astype(np.int32)
-            replacedSegmentID = np.append(replacedSegmentID, segmentID[start]).astype(np.int32)
-            lastEnd = end
+        for start, end, s in sortedPos:  #start、end都是在原文档中实体提及的开始和结束位置
+            insertPos = 0
+            if start < lastEnd:  # 表明出现了重叠实体提及
+                insertPos = len(replacedWords) - (lastEnd - start)     #要在哪里插入重叠提及的标记
+                replacedWords = np.concatenate((replacedWords[:insertPos], np.array([1008]).astype(np.int32), replacedWords[insertPos:]))
+                replacedSegmentID = np.concatenate((replacedSegmentID[:insertPos], np.array([segmentID[start]]).astype(np.int32), replacedSegmentID[insertPos:]))
+                # lastEnd = end
+            else:
+                replacedWords = np.concatenate((replacedWords, words[lastEnd:start]))
+                insertPos = len(replacedWords)
+                replacedWords = np.concatenate((replacedWords, np.array([1008]).astype(np.int32), words[start:end]))
+                replacedSegmentID = np.concatenate((replacedSegmentID, segmentID[lastEnd:start], np.array([segmentID[start]]).astype(np.int32), segmentID[start:end]))
+                lastEnd = end
+            if s == 'h':
+                headMentionPos = np.append(headMentionPos, insertPos)
+            else:
+                tailMentionPos = np.append(tailMentionPos, insertPos)
         
         replacedWords = np.concatenate((replacedWords, words[lastEnd:])).astype(np.int32)
         replacedSegmentID = np.concatenate((replacedSegmentID, segmentID[lastEnd:])).astype(np.int32)
-
-        replacedWords = np.pad(replacedWords, (0, 512 - len(replacedWords)), mode='constant', constant_values=0)
-        replacedSegmentID = np.pad(replacedSegmentID,  (0, 512 - len(replacedSegmentID)), mode='constant', constant_values=0)
-
-        for i in range(len(replacedWords)):
-            if replacedWords[i] == -1:
-                replacedWords[i] = 20
-                headMentionPos = np.append(headMentionPos, i)
-            if replacedWords[i] == -2:
-                replacedWords[i] = 20
-                tailMentionPos = np.append(tailMentionPos, i)
         
+        if len(replacedWords) > 1024:
+            replacedWords = replacedWords[0:1024]
+            replacedSegmentID = replacedSegmentID[0:1024]
+        else:
+            replacedWords = np.pad(replacedWords, (0, 1024 - len(replacedWords)), mode='constant', constant_values=0)
+            replacedSegmentID = np.pad(replacedSegmentID,  (0, 1024 - len(replacedSegmentID)), mode='constant', constant_values=0)
+
         return replacedWords, replacedSegmentID, headMentionPos, tailMentionPos
     
     def __len__(self):
