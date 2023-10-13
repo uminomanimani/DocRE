@@ -4,6 +4,8 @@ import os
 import torch
 from torch.utils.data import Dataset
 from transformers import BertModel
+import time
+
 
 
 def load_data(prefix, data_path='./prepro_data'):
@@ -28,6 +30,8 @@ def load_data(prefix, data_path='./prepro_data'):
 
 class DocREDataset(Dataset):
     def __init__(self, prefix : str, data_path : str, bertPath : str):
+        t1 = time.time()
+        print('start')
         self.data_word, self.data_pos, self.data_ner, self.data_char, self.file = load_data(prefix=prefix, data_path=data_path)
         
         self.bert = BertModel.from_pretrained(bertPath)
@@ -38,13 +42,17 @@ class DocREDataset(Dataset):
         assert(len(self.data_word) == len(self.data_pos) == len(self.data_ner) == len(self.file))
 
         self.data = []
+
+        maxNumEntity = 0
         
         for i in range(l):
             words = self.data_word[i] #这篇文档中单词映射到token的列表
-            # lenWords = self.file[i]['Ls'][-1]
+            lenWords = self.file[i]['Ls'][-1]
             labels = self.file[i]['labels'] #这篇文档中的标签
             naTriple = self.file[i]['na_triple']
             numEntity = len(self.file[i]['vertexSet']) #这篇文档中实体的数量
+            if numEntity > maxNumEntity:
+                maxNumEntity = numEntity
             segmentID = []
             for j in range(1, len(self.file[i]['Ls'])):
                 segmentID = segmentID + [0 if (j - 1) % 2 == 0 else 1] * (self.file[i]['Ls'][j] - self.file[i]['Ls'][j - 1])
@@ -53,6 +61,7 @@ class DocREDataset(Dataset):
 
             pageData = []
             triples = []
+            maxPairLength = 1024
 
             for label in labels:
                 triple = [label['h'], label['t'], label['r']]
@@ -83,23 +92,24 @@ class DocREDataset(Dataset):
                             end = tailEntityMention['pos'][1]
                             entityPos.append([start, end, 't'])
                         
-                        replacedWords, replacedSegmentID, headMentionPos, tailMentionPos = self.replaceMention(words=words, entityPos=entityPos, segmentID=segmentID)
+                        replacedWords, mask, replacedSegmentID, headMentionPos, tailMentionPos = self.replaceMention(words=words, entityPos=entityPos, segmentID=segmentID, lenWords=lenWords)
                         replacedWords = torch.from_numpy(replacedWords)
+                        mask = torch.from_numpy(mask)
                         replacedSegmentID = torch.from_numpy(replacedSegmentID)
                         headMentionPos = torch.from_numpy(headMentionPos)
                         tailMentionPos = torch.from_numpy(tailMentionPos)
                         # 返回：插入了标记的文档，插入了标记后的段落ID，头实体提及的标记位置，尾实体提及的标记位置，头实体ID，尾实体ID，关系编号
-                        pageData.append((replacedWords, replacedSegmentID, headMentionPos, tailMentionPos, x, y, relation))
-                        # headEntityRepresentation, tailEntityRepresentation = encode(bert=self.bert, replacedWords=replacedWords, replacedSegmentID=replacedSegmentID, 
-                        #                         headMentionPos=headMentionPos, tailMentionPos=tailMentionPos)
-                        # featureMap[x][y][0] = headEntityRepresentation
-                        # featureMap[x][y][1] = tailEntityRepresentation
+                        pageData.append([replacedWords, mask, replacedSegmentID, headMentionPos, tailMentionPos, x, y, relation])
             
+            # pageData = pageData + (maxPairLength - len(pageData) - 1) * [[]] + [[len(pageData)]]          
             self.data.append(pageData)
-            print(f'added page {i}')
+            pass
+        t2 = time.time()
+        print(maxNumEntity)
+        print(f'finished after {t2-t1}')
         pass
 
-    def replaceMention(self, words, entityPos, segmentID):
+    def replaceMention(self, words, entityPos, segmentID, lenWords):
         sortedPos = sorted(entityPos, key=lambda x : x[0])
         replacedSegmentID = np.array([]).astype(np.int32)
         replacedWords = np.array([]).astype(np.int32)
@@ -119,6 +129,7 @@ class DocREDataset(Dataset):
                 replacedWords = np.concatenate((replacedWords, np.array([1008]).astype(np.int32), words[start:end]))
                 replacedSegmentID = np.concatenate((replacedSegmentID, segmentID[lastEnd:start], np.array([segmentID[start]]).astype(np.int32), segmentID[start:end]))
                 lastEnd = end
+            lenWords = lenWords + 1  # 每插入一个标记，文档长度就会+1
             if s == 'h':
                 headMentionPos = np.append(headMentionPos, insertPos)
             else:
@@ -134,7 +145,11 @@ class DocREDataset(Dataset):
             replacedWords = np.pad(replacedWords, (0, 1024 - len(replacedWords)), mode='constant', constant_values=0)
             replacedSegmentID = np.pad(replacedSegmentID,  (0, 1024 - len(replacedSegmentID)), mode='constant', constant_values=0)
 
-        return replacedWords, replacedSegmentID, headMentionPos, tailMentionPos
+        ones = np.ones(lenWords, dtype=np.int32)
+        zeros = np.zeros(1024 - lenWords, dtype=np.int32)
+        mask = np.concatenate((ones, zeros))
+
+        return replacedWords, mask, replacedSegmentID, headMentionPos, tailMentionPos
     
     def __len__(self):
         return len(self.data)
@@ -145,5 +160,8 @@ class DocREDataset(Dataset):
 
 if __name__ == '__main__':
     d = DocREDataset('dev_train', './prepro_data', '../pretrained/')
-    x = d.__getitem__(123)
+    x = d.__getitem__(114)
+    y = d.__getitem__(514)
+    z = d.__getitem__(1919)
+    a = d.__getitem__(810)
     pass
