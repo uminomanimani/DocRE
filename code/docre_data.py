@@ -29,14 +29,10 @@ def load_data(prefix, data_path='./prepro_data'):
         
 
 class DocREDataset(Dataset):
-    def __init__(self, prefix : str, data_path : str, bertPath : str):
+    def __init__(self, prefix : str, data_path : str):
         t1 = time.time()
         print('start')
         self.data_word, self.data_pos, self.data_ner, self.data_char, self.file = load_data(prefix=prefix, data_path=data_path)
-        
-        self.bert = BertModel.from_pretrained(bertPath)
-        for param in self.bert.parameters():
-            param.requires_grad = False
 
         l = len(self.data_word)
         assert(len(self.data_word) == len(self.data_pos) == len(self.data_ner) == len(self.file))
@@ -61,7 +57,6 @@ class DocREDataset(Dataset):
 
             pageData = []
             triples = []
-            maxPairLength = 1024
 
             for label in labels:
                 triple = [label['h'], label['t'], label['r']]

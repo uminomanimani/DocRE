@@ -34,31 +34,44 @@ from docre_data import DocREDataset
 #     ...
 #     [[replacedPage15...], [...], ...]
 #]
-def encodeV2(bert, replacedWords, mask, replacedSegmentID, headMentionPos, tailMentionPos, headEntityID, tailEntityID, relation):
-    # item的每个元素的第一个维度是两两配对的实体对的数量
-    for item in zip(replacedWords, mask, replacedSegmentID, headMentionPos, tailMentionPos, headEntityID, tailEntityID):
-        # featureMap = torch.Tensor(size=(len(item) + 1, len(item) + 1, 768))
-        hiddenStates = bert(input_id=item[0], attention_mask=item[1], token_type_ids=item[2])[0]
 
-    pass
-
-import torch
-from torch.nn.utils.rnn import pad_sequence
+def cf(batch):
+    return batch
 
 def collate_fn(batch):
-    max_length = max(len(sample) for sample in batch)
+    label = []
+    new_batch = []
+    for items in batch:  #len(items)是实体对的数量. label map的数量和batch_size的大小相同
+        new_item = []
+        labelMap = []
+        for item in items:
+            new_item.clear()
+            new_item.append(item[0])
+            new_item.append(item[1])
+            new_item.append(item[2])
+            new_item.append(item[3])
+            new_item.append(item[4])
+        new_batch.append(new_item)
 
-    words_for_pad = [0] * 1024
-    mask_for_pad = [0] * 1024
-    segmentID_for_pad = [0] * 1024
-    
+        # new_item = []
+        # replacedWords = [item[0] for item in items]
+        # mask = [item[1] for item in items]
+        # replacedSegmentID = [item[2] for item in items]
+        # headMentionPos = [item[3] for item in items]
+        # tailMentionPos = [item[4] for item in items]
 
-    for sample in batch:
-        for words, mask, segmentID, headMentionPos, tailMentionPos, headID, tailID, relation in sample:
+        # new_batch.append([replacedWords, mask, replacedSegmentID, headMentionPos, tailMentionPos])
+        # headEntityID = [item[5] for item in items]
+        # tailEntityID = [item[6] for item in items]
+        # relation = [item[7] for item in items]
 
-            pass
+        # labelMap = torch.Tensor(size=(len(relation) + 1, len(relation) + 1))
 
-        
+    return new_batch, label
+
+def encodeV2(bert, batch):
+
+    pass     
 
 
 class MyModel(nn.Module):
@@ -72,8 +85,7 @@ class MyModel(nn.Module):
 
 if __name__ == "__main__":
     # model = MyModel()
-    dataset = DocREDataset('dev_train', './prepro_data', '../pretrained/')
+    dataset = DocREDataset('dev_train', './prepro_data')
     dataloader = DataLoader(dataset=dataset, batch_size=4, collate_fn=collate_fn)
-    for batch in dataloader:
-        b = batch
+    for i, batch in enumerate(dataloader):
         pass
