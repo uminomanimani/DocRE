@@ -1,9 +1,11 @@
+from typing import Any
 import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from transformers import BertModel
 from docre_data import DocREDataset
+import math
 
 # def encode(bert, replacedWords, replacedSegmentID, headMentionPos, tailMentionPos):
 #     lenPage = np.argwhere(replacedWords == 0)[0][0] if len(np.argwhere(replacedWords == 0)) > 0 else 1024
@@ -35,57 +37,81 @@ from docre_data import DocREDataset
 #     [[replacedPage15...], [...], ...]
 #]
 
-def cf(batch):
-    return batch
-
 def collate_fn(batch):
     label = []
-    new_batch = []
     for items in batch:  #len(items)是实体对的数量. label map的数量和batch_size的大小相同
-        new_item = []
-        labelMap = []
+        numEntity = math.ceil(math.sqrt(len(items)))
+        labelMap = torch.zeros(size=(numEntity, numEntity), dtype=torch.int32)
         for item in items:
-            new_item.clear()
-            new_item.append(item[0])
-            new_item.append(item[1])
-            new_item.append(item[2])
-            new_item.append(item[3])
-            new_item.append(item[4])
-        new_batch.append(new_item)
+            if item[7] != None:
+                labelMap[item[5]][item[6]] = item[7]
+        label.append(labelMap)
+    return batch, label
 
-        # new_item = []
-        # replacedWords = [item[0] for item in items]
-        # mask = [item[1] for item in items]
-        # replacedSegmentID = [item[2] for item in items]
-        # headMentionPos = [item[3] for item in items]
-        # tailMentionPos = [item[4] for item in items]
+class Encode:
+    def __init__(self, bert):
+        self.bert = bert
+        pass 
 
-        # new_batch.append([replacedWords, mask, replacedSegmentID, headMentionPos, tailMentionPos])
-        # headEntityID = [item[5] for item in items]
-        # tailEntityID = [item[6] for item in items]
-        # relation = [item[7] for item in items]
+    def __call__(self, batch):
+        featureMaps = []
+        for items in batch:
+            numEntity = math.ceil(math.sqrt(len(items)))
+            replacedWords = []
+            masks = []
+            segmentIDs = []
+            headMentionPos = []
+            tailMentionPos = []
+            headEntityID = []
+            tailEntityID = []
+            for item in items:
+                replacedWords.append(item[0])
+                masks.append(item[1])
+                segmentIDs.append(item[2])
+                headMentionPos.append(item[3])
+                tailMentionPos.append(item[4])
+                headEntityID.append(item[5])
+                tailEntityID.append(item[6])
+            # replacedWords = torch.tensor(replacedWords, dtype=torch.int32)
+            # masks = torch.tensor(masks, dtype=torch.int32)
+            # segmentIDs = torch.tensor(segmentIDs, dtype=torch.int32)
+            hiddenStates = self.bert(input_ids=replacedWords, attention_mask=masks, token_type_ids=segmentIDs)[0]
+            featureMap = torch.zeros(size=(numEntity, numEntity, 768 * 2))
+            for headMention, tailMention, headID, tailID, hiddenState in zip(headMentionPos, 
+                                                                             tailMentionPos, 
+                                                                             headEntityID, 
+                                                                             tailEntityID, 
+                                                                             hiddenStates):
+                headMentionRepresentation = hiddenState[headMention]
+                tailMentionRepresentation = hiddenState[tailMention]
+                headEntityRepresentation = torch.logsumexp(headMentionRepresentation, dim=0)
+                tailEntityRepresentation = torch.logsumexp(tailMentionRepresentation, dim=0)
+                
+        pass  
 
-        # labelMap = torch.Tensor(size=(len(relation) + 1, len(relation) + 1))
 
-    return new_batch, label
-
-def encodeV2(bert, batch):
-
-    pass     
-
-
-class MyModel(nn.Module):
-    def __init__(self, bertPath : str, replacedWords, mask, replacedSegmentID, headMentionPos, tailMentionPos, headEntityID, tailEntityID) -> None:
+class DocREModel(nn.Module):
+    def __init__(self, bertPath : str) -> None:
         super().__init__()
         self.bert = BertModel.from_pretrained(bertPath)
 
         for param in self.bert.parameters():
             param.requires_grad = False
         
+        self.encode = Encode(bert=self.bert)
+
+    
+    def forward(self, batch):
+        featureMaps = self.encode(batch=batch)
+        return None
+        pass
+
+        
 
 if __name__ == "__main__":
-    # model = MyModel()
-    dataset = DocREDataset('dev_train', './prepro_data')
-    dataloader = DataLoader(dataset=dataset, batch_size=4, collate_fn=collate_fn)
-    for i, batch in enumerate(dataloader):
+    model = DocREModel('../pretrained')
+    dataset = DocREDataset('dev_test', './prepro_data')
+    dataloader = DataLoader(dataset=dataset, batch_size=4, collate_fn=collate_fn, shuffle=True)
+    for data, label in dataloader:
+        x = model(data)
         pass
