@@ -4,6 +4,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from docre_data import DocREDataset
 from transformers import AutoConfig, AutoModel, AutoTokenizer
+from allennlp.modules.matrix_attention import DotProductMatrixAttention, CosineMatrixAttention, BilinearMatrixAttention
 import torch.nn.functional as F
 
 # 每条包含以下几个部分：
@@ -111,6 +112,52 @@ class Encode:
         return sequence_output, attention 
 
 
+def getFeatureMap(sequence_output, entityPos):
+    assert(len(sequence_output) == len(entityPos))
+    maxSeqLenOfABatch = sequence_output.shape[1]
+    batchSize = len(entityPos)
+    batchEntityEmbeddings = []
+    for i in range(batchSize):
+        entityEmbeddings = []
+        for entityID, mentionPos in enumerate(entityPos[i]):
+            entityEmbedding = None
+            if len(mentionPos) == 1: # 表示这个实体只有一个提及
+                start, end = mentionPos[0]
+                if start + 1 < maxSeqLenOfABatch:
+                    entityEmbedding = sequence_output[i, start + 1]  # entityEmbedding里面有一个tensor的元素
+                if len(entityEmbedding) == 0:
+                    entityEmbedding = torch.zeros(768)
+            #到这里为止，entityEmbedding是一个包含了一个tensor的列表
+            else:  # 这个实体有多个提及
+                mentionEmbedding = []
+                for start, end in mentionPos:
+                    if start + 1 < maxSeqLenOfABatch:
+                        mentionEmbedding.append(sequence_output[i, start + 1])
+                if len(mentionEmbedding) == 0:
+                    mentionEmbedding.append(torch.zeros(768))
+                else:
+                    mentionEmbedding = torch.stack(mentionEmbedding, dim=0)
+                    entityEmbedding = torch.logsumexp(mentionEmbedding, dim=0)
+                    
+            entityEmbeddings.append(entityEmbedding)
+        entityEmbeddings = torch.stack(entityEmbeddings)
+        batchEntityEmbeddings.append(entityEmbeddings) # batchEntityEmbeddings每个元素的形状应该是：[entityNum, 768]
+    
+    b, _, d = sequence_output.shape
+    ent_encode = sequence_output.new_zeros(b, 42, d)
+    for _b in range(b):
+        entity_emb = batchEntityEmbeddings[_b]     #实体的embedding
+        entity_num = entity_emb.size(0)
+        ent_encode[_b, :entity_num, :] = entity_emb    # entity_emb : (entity_num, 768)
+    # similar0 = ElementWiseMatrixAttention()(ent_encode, ent_encode).unsqueeze(-1)
+    similar1 = DotProductMatrixAttention()(ent_encode, ent_encode).unsqueeze(-1) # (4,42,42,1)
+    similar2 = CosineMatrixAttention()(ent_encode, ent_encode).unsqueeze(-1)
+    similar3 = BilinearMatrixAttention(768, 768).to(ent_encode.device)(ent_encode, ent_encode).unsqueeze(-1)
+    attn_input = torch.cat([similar1,similar2,similar3],dim=-1).permute(0, 3, 1, 2).contiguous()
+    return batchEntityEmbeddings
+
+
+
 class DocREModel(nn.Module):
     def __init__(self, bert, config) -> None:
         super().__init__()
@@ -125,6 +172,9 @@ class DocREModel(nn.Module):
     
     def forward(self, batch):
         sequence_output, attention = self.encode(input_ids=batch[0], masks=batch[1])
+        labels, entity_pos, hts = batch[2], batch[3], batch[4]
+        # sequence_output : (4,max_len,768) attention : (4, 12(自注意力头的数量), max_len, max_len)
+        entityEmbeddings = getFeatureMap(sequence_output=sequence_output, entityPos=entity_pos)
         return None
 
         
