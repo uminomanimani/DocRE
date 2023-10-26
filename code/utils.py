@@ -1,0 +1,68 @@
+import torch
+from allennlp.modules.matrix_attention import DotProductMatrixAttention, CosineMatrixAttention, BilinearMatrixAttention
+import numpy as np
+
+def getFeatureMap(sequence_output, entityPos):
+    assert(len(sequence_output) == len(entityPos))
+    maxSeqLenOfABatch = sequence_output.shape[1]
+    batchSize = len(entityPos)
+    batchEntityEmbeddings = []
+    for i in range(batchSize):
+        entityEmbeddings = []
+        for entityID, mentionPos in enumerate(entityPos[i]):
+            entityEmbedding = None
+            if len(mentionPos) == 1: # 表示这个实体只有一个提及
+                start, end = mentionPos[0]
+                if start + 1 < maxSeqLenOfABatch:
+                    entityEmbedding = sequence_output[i, start + 1]  # entityEmbedding里面有一个tensor的元素
+                if len(entityEmbedding) == 0:
+                    entityEmbedding = torch.zeros(768)
+            #到这里为止，entityEmbedding是一个包含了一个tensor的列表
+            else:  # 这个实体有多个提及
+                mentionEmbedding = []
+                for start, end in mentionPos:
+                    if start + 1 < maxSeqLenOfABatch:
+                        mentionEmbedding.append(sequence_output[i, start + 1])
+                if len(mentionEmbedding) == 0:
+                    mentionEmbedding.append(torch.zeros(768))
+                else:
+                    mentionEmbedding = torch.stack(mentionEmbedding, dim=0)
+                    entityEmbedding = torch.logsumexp(mentionEmbedding, dim=0)
+                    
+            entityEmbeddings.append(entityEmbedding)
+        entityEmbeddings = torch.stack(entityEmbeddings)
+        batchEntityEmbeddings.append(entityEmbeddings) # batchEntityEmbeddings每个元素的形状应该是：[entityNum, 768]
+    
+    b, _, d = sequence_output.shape
+    ent_encode = sequence_output.new_zeros(b, 42, d)
+    for _b in range(b):
+        entity_emb = batchEntityEmbeddings[_b]     #实体的embedding
+        entity_num = entity_emb.size(0)
+        ent_encode[_b, :entity_num, :] = entity_emb    # entity_emb : (entity_num, 768)
+    # similar0 = ElementWiseMatrixAttention()(ent_encode, ent_encode).unsqueeze(-1)
+    similar1 = DotProductMatrixAttention()(ent_encode, ent_encode).unsqueeze(-1) # (4,42,42,1)
+    similar2 = CosineMatrixAttention()(ent_encode, ent_encode).unsqueeze(-1)
+    similar3 = BilinearMatrixAttention(768, 768).to(ent_encode.device)(ent_encode, ent_encode).unsqueeze(-1)
+    attn_input = torch.cat([similar1,similar2,similar3],dim=-1).permute(0, 3, 1, 2).contiguous()
+    return attn_input
+
+#应该返回的形状:(batch_size, 97, 42, 42)
+def getLabelMap(labels, hts):
+    assert(len(labels) == len(hts))
+    labelMaps = []
+    for i in range(len(labels)):
+        assert(len(labels[i]) == len(hts[i]))
+        labelMap = np.zeros(shape=(42, 42, 97), dtype=np.int32)
+        labelMap[..., 0] = 1
+        labelMap = torch.from_numpy(labelMap)
+        # labelMap = torch.zeros(size=(42, 42, 97), dtype=torch.int32)
+        for j in range(len(labels[i])):
+            l = torch.tensor(labels[i][j])
+            h = hts[i][j][0]
+            t = hts[i][j][1]
+            labelMap[h, t, :] = l
+        labelMap = labelMap.permute(2, 0, 1)
+        labelMaps.append(labelMap)
+    labelMaps = torch.stack(labelMaps)
+    labelMaps = labelMaps.to(dtype=torch.float)
+    return labelMaps

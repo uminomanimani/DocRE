@@ -11,6 +11,7 @@ class DocREDataset(Dataset):
         self.readDataset = ReadDataset('docred', self.tokenizer, max_seq_Length=1024)
 
         self.features = self.readDataset.read(file_in=file)
+        pass
     
     def __len__(self):
         return len(self.features)
@@ -20,4 +21,5 @@ class DocREDataset(Dataset):
 
 if __name__ == '__main__':
     d = DocREDataset('../data/test.json')
+    
     pass

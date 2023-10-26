@@ -4,8 +4,10 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from docre_data import DocREDataset
 from transformers import AutoConfig, AutoModel, AutoTokenizer
-from allennlp.modules.matrix_attention import DotProductMatrixAttention, CosineMatrixAttention, BilinearMatrixAttention
 import torch.nn.functional as F
+from utils import getFeatureMap, getLabelMap
+import tqdm
+
 
 # 每条包含以下几个部分：
 # input_ids:单词转为token的列表，长度和文章长度相同
@@ -112,49 +114,133 @@ class Encode:
         return sequence_output, attention 
 
 
-def getFeatureMap(sequence_output, entityPos):
-    assert(len(sequence_output) == len(entityPos))
-    maxSeqLenOfABatch = sequence_output.shape[1]
-    batchSize = len(entityPos)
-    batchEntityEmbeddings = []
-    for i in range(batchSize):
-        entityEmbeddings = []
-        for entityID, mentionPos in enumerate(entityPos[i]):
-            entityEmbedding = None
-            if len(mentionPos) == 1: # 表示这个实体只有一个提及
-                start, end = mentionPos[0]
-                if start + 1 < maxSeqLenOfABatch:
-                    entityEmbedding = sequence_output[i, start + 1]  # entityEmbedding里面有一个tensor的元素
-                if len(entityEmbedding) == 0:
-                    entityEmbedding = torch.zeros(768)
-            #到这里为止，entityEmbedding是一个包含了一个tensor的列表
-            else:  # 这个实体有多个提及
-                mentionEmbedding = []
-                for start, end in mentionPos:
-                    if start + 1 < maxSeqLenOfABatch:
-                        mentionEmbedding.append(sequence_output[i, start + 1])
-                if len(mentionEmbedding) == 0:
-                    mentionEmbedding.append(torch.zeros(768))
-                else:
-                    mentionEmbedding = torch.stack(mentionEmbedding, dim=0)
-                    entityEmbedding = torch.logsumexp(mentionEmbedding, dim=0)
-                    
-            entityEmbeddings.append(entityEmbedding)
-        entityEmbeddings = torch.stack(entityEmbeddings)
-        batchEntityEmbeddings.append(entityEmbeddings) # batchEntityEmbeddings每个元素的形状应该是：[entityNum, 768]
+class SegmetationNet(nn.Module):
+    def __init__(self, num_class : int) -> None:
+        super().__init__()
+        self.in_channels = 3
+        self.num_class = num_class
+
+        # conv1
+        self.conv1_1 = nn.Conv2d(3, 64, 3, padding=100)
+        self.relu1_1 = nn.ReLU(inplace=True)
+        self.conv1_2 = nn.Conv2d(64, 64, 3, padding=1)
+        self.relu1_2 = nn.ReLU(inplace=True)
+        self.pool1 = nn.MaxPool2d(2, stride=2, ceil_mode=True)  # 1/2
+
+        # conv2
+        self.conv2_1 = nn.Conv2d(64, 128, 3, padding=1)
+        self.relu2_1 = nn.ReLU(inplace=True)
+        self.conv2_2 = nn.Conv2d(128, 128, 3, padding=1)
+        self.relu2_2 = nn.ReLU(inplace=True)
+        self.pool2 = nn.MaxPool2d(2, stride=2, ceil_mode=True)  # 1/4
+
+        # conv3
+        self.conv3_1 = nn.Conv2d(128, 256, 3, padding=1)
+        self.relu3_1 = nn.ReLU(inplace=True)
+        self.conv3_2 = nn.Conv2d(256, 256, 3, padding=1)
+        self.relu3_2 = nn.ReLU(inplace=True)
+        self.conv3_3 = nn.Conv2d(256, 256, 3, padding=1)
+        self.relu3_3 = nn.ReLU(inplace=True)
+        self.pool3 = nn.MaxPool2d(2, stride=2, ceil_mode=True)  # 1/8
+
+        # conv4
+        self.conv4_1 = nn.Conv2d(256, 512, 3, padding=1)
+        self.relu4_1 = nn.ReLU(inplace=True)
+        self.conv4_2 = nn.Conv2d(512, 512, 3, padding=1)
+        self.relu4_2 = nn.ReLU(inplace=True)
+        self.conv4_3 = nn.Conv2d(512, 512, 3, padding=1)
+        self.relu4_3 = nn.ReLU(inplace=True)
+        self.pool4 = nn.MaxPool2d(2, stride=2, ceil_mode=True)  # 1/16
+
+        # conv5
+        self.conv5_1 = nn.Conv2d(512, 512, 3, padding=1)
+        self.relu5_1 = nn.ReLU(inplace=True)
+        self.conv5_2 = nn.Conv2d(512, 512, 3, padding=1)
+        self.relu5_2 = nn.ReLU(inplace=True)
+        self.conv5_3 = nn.Conv2d(512, 512, 3, padding=1)
+        self.relu5_3 = nn.ReLU(inplace=True)
+        self.pool5 = nn.MaxPool2d(2, stride=2, ceil_mode=True)  # 1/32
+
+        # fc6
+        self.fc6 = nn.Conv2d(512, 4096, 7)
+        self.relu6 = nn.ReLU(inplace=True)
+        self.drop6 = nn.Dropout2d()
+
+        # fc7
+        self.fc7 = nn.Conv2d(4096, 4096, 1)
+        self.relu7 = nn.ReLU(inplace=True)
+        self.drop7 = nn.Dropout2d()
+
+        self.score_fr = nn.Conv2d(4096, self.num_class, 1)
+        self.score_pool3 = nn.Conv2d(256, self.num_class, 1)
+        self.score_pool4 = nn.Conv2d(512, self.num_class, 1)
+
+        self.upscore2 = nn.ConvTranspose2d(
+            self.num_class, self.num_class, 4, stride=2, bias=False)
+        self.upscore8 = nn.ConvTranspose2d(
+            self.num_class, self.num_class, 16, stride=8, bias=False)
+        self.upscore_pool4 = nn.ConvTranspose2d(
+            self.num_class, self.num_class, 4, stride=2, bias=False)
     
-    b, _, d = sequence_output.shape
-    ent_encode = sequence_output.new_zeros(b, 42, d)
-    for _b in range(b):
-        entity_emb = batchEntityEmbeddings[_b]     #实体的embedding
-        entity_num = entity_emb.size(0)
-        ent_encode[_b, :entity_num, :] = entity_emb    # entity_emb : (entity_num, 768)
-    # similar0 = ElementWiseMatrixAttention()(ent_encode, ent_encode).unsqueeze(-1)
-    similar1 = DotProductMatrixAttention()(ent_encode, ent_encode).unsqueeze(-1) # (4,42,42,1)
-    similar2 = CosineMatrixAttention()(ent_encode, ent_encode).unsqueeze(-1)
-    similar3 = BilinearMatrixAttention(768, 768).to(ent_encode.device)(ent_encode, ent_encode).unsqueeze(-1)
-    attn_input = torch.cat([similar1,similar2,similar3],dim=-1).permute(0, 3, 1, 2).contiguous()
-    return batchEntityEmbeddings
+    def forward(self, x):
+        h = x  # (batch_size,3,42,42)
+        h = self.relu1_1(self.conv1_1(h)) # (batch_size,64,240,240)
+        h = self.relu1_2(self.conv1_2(h)) # (batch_size,64,240,240)
+        h = self.pool1(h) # (batch_size,64,120,120)
+
+        h = self.relu2_1(self.conv2_1(h)) # (batch_size,128,120,120)
+        h = self.relu2_2(self.conv2_2(h)) # (batch_size,128,120,120)
+        h = self.pool2(h) # (batch_size,128,60,60)
+
+        h = self.relu3_1(self.conv3_1(h)) # (batch_size,256,60,60)
+        h = self.relu3_2(self.conv3_2(h)) # (batch_size,256,60,60)
+        h = self.relu3_3(self.conv3_3(h)) # (batch_size,256,60,60)
+        h = self.pool3(h) # (batch_size,256,30,30)
+        pool3 = h  # 1/8，这里pool3的形状是原图的1/8
+
+        h = self.relu4_1(self.conv4_1(h))
+        h = self.relu4_2(self.conv4_2(h))
+        h = self.relu4_3(self.conv4_3(h))
+        h = self.pool4(h) # (batch_size,512,15,15)
+        pool4 = h  # 1/16 # (batch_size,512,15,15)
+
+        h = self.relu5_1(self.conv5_1(h))
+        h = self.relu5_2(self.conv5_2(h))
+        h = self.relu5_3(self.conv5_3(h))
+        h = self.pool5(h) # (batch_size,512,8,8)
+
+        h = self.relu6(self.fc6(h))
+        h = self.drop6(h)
+
+        h = self.relu7(self.fc7(h))
+        h = self.drop7(h)
+
+        h = self.score_fr(h)
+        h = self.upscore2(h)
+        upscore2 = h  # 1/16 # (batch_size,97,6,6)
+
+        h = self.score_pool4(pool4) # (batch_size,512,15,15)
+        # s = upscore2.size()
+        h = h[:, :, 5:5 + upscore2.size()[2], 5:5 + upscore2.size()[3]] # (batch_size,79,6,6)
+        score_pool4c = h  # 1/16
+
+        h = upscore2 + score_pool4c  # 1/16
+        h = self.upscore_pool4(h)
+        upscore_pool4 = h  # 1/8
+
+        h = self.score_pool3(pool3)
+        h = h[:, :,
+              9:9 + upscore_pool4.size()[2],
+              9:9 + upscore_pool4.size()[3]]
+        score_pool3c = h  # 1/8
+
+        h = upscore_pool4 + score_pool3c  # 1/8
+
+        h = self.upscore8(h)
+        h = h[:, :, 31:31 + x.size()[2], 31:31 + x.size()[3]].contiguous()
+
+        return h
+        
 
 
 
@@ -168,14 +254,15 @@ class DocREModel(nn.Module):
             param.requires_grad = False
         
         self.encode = Encode(bert=self.bert, config=config)
+        self.segmetation = SegmetationNet(97)
 
     
-    def forward(self, batch):
-        sequence_output, attention = self.encode(input_ids=batch[0], masks=batch[1])
-        labels, entity_pos, hts = batch[2], batch[3], batch[4]
+    def forward(self, input_ids, masks, entityPos):
+        sequence_output, attention = self.encode(input_ids=input_ids, masks=masks)      
         # sequence_output : (4,max_len,768) attention : (4, 12(自注意力头的数量), max_len, max_len)
-        entityEmbeddings = getFeatureMap(sequence_output=sequence_output, entityPos=entity_pos)
-        return None
+        FeatureMap = getFeatureMap(sequence_output=sequence_output, entityPos=entityPos)
+        logits = self.segmetation(FeatureMap)    # (batch_size, 97, 42, 42)
+        return logits
 
         
 
@@ -192,9 +279,32 @@ if __name__ == "__main__":
         config=config,
     )
 
-    dataset = DocREDataset('../data/test.json', tokenizer=tokenizer)
+    dataset = DocREDataset('../data/train_annotated.json', tokenizer=tokenizer)
     dataloader = DataLoader(dataset=dataset, batch_size=4, collate_fn=collate_fn, shuffle=True)
     model = DocREModel(bert, config)
-    for batch in dataloader:
-        x = model(batch)
-        pass
+    loss_fn = nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4, weight_decay=5e-5)
+    epochs = 10
+    device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+    model = model.to(device=device)
+
+    for epoch in range(epochs):
+        with tqdm(total=len(dataloader), desc=f'Epoch {epoch} train') as pbar_train:
+            total_loss = 0
+            for batch in dataloader:
+                input_ids, masks, entityPos = batch[0], batch[1], batch[3]
+                labels, hts = batch[2], batch[4]
+                labelMap = getLabelMap(labels=labels, hts=hts) # (4,97,42,42)
+
+                input_ids = input_ids.to(device=device)
+                labelMap = labelMap.to(device=device)
+                
+                logits = model(input_ids, masks, entityPos) # (4,97,42,42)
+                loss = loss_fn(logits, labelMap)
+                total_loss += loss.item()
+
+                loss.backward()
+                optimizer.step()
+                pbar_train.update(1)
+                pass
+            print(f'epoch : {epoch}, loss={total_loss}')

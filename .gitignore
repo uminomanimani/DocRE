@@ -5,6 +5,7 @@ code/prepro_data/*.npy
 code/test.py
 pretrained/*
 !pretrained/.gitkeep
+*.pkl
 
 
 # Byte-compiled / optimized / DLL files
