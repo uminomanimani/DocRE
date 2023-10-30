@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from utils import getFeatureMap
+# from torch_geometric.nn import GCNCnov
 
 
 # 每条包含以下几个部分：
@@ -250,12 +251,12 @@ class DocREModel(nn.Module):
             param.requires_grad = False
         
         self.encode = Encode(bert=self.bert, config=config)
-        self.segmetation = SegmetationNet(97)
+        self.segmetation = SegmetationNet(num_class=97)
 
     
     def forward(self, input_ids, masks, entityPos):
         sequence_output, attention = self.encode(input_ids=input_ids, masks=masks)      
         # sequence_output : (4,max_len,768) attention : (4, 12(自注意力头的数量), max_len, max_len)
-        FeatureMap = getFeatureMap(sequence_output=sequence_output, entityPos=entityPos)
+        FeatureMap = getFeatureMap(sequence_output=sequence_output, entityPos=entityPos)  #这里输出的通道数为num_class
         logits = self.segmetation(FeatureMap)    # (batch_size, 97, 42, 42)
         return logits
