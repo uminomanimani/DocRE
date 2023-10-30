@@ -38,12 +38,12 @@ if __name__ == "__main__":
     loss_fn = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-6, weight_decay=5e-5)
     epochs = 500
-    model = model.to(device=device)
 
     for epoch in range(epochs):
         total_loss = 0
         with tqdm(total=len(trainDataloader), desc=f'Epoch {epoch}/{epochs} train') as pbar_train:
             model.train()
+            model = model.to(device=device)
             for batch in trainDataloader:
                 input_ids, masks, entityPos = batch[0], batch[1], batch[3]
                 labels, hts = batch[2], batch[4]
@@ -76,6 +76,7 @@ if __name__ == "__main__":
                     labels, hts = batch[2], batch[4]
                     labelMap = getLabelMap(labels=labels, hts=hts)
                     _, labelMap = torch.max(labelMap, dim=1)
+                    model = model.to('cpu')
 
                     pre = model(input_ids, masks, entityPos)
 
