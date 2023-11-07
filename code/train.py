@@ -76,7 +76,11 @@ if __name__ == "__main__":
                     labels, hts = batch[2], batch[4]
                     labelMap = getLabelMap(labels=labels, hts=hts)
                     _, labelMap = torch.max(labelMap, dim=1)
-                    model = model.to('cpu')
+                    # model = model.to('cpu')
+
+                    input_ids = input_ids.to(device=device)
+                    masks = masks.to(device=device)
+                    labelMap = labelMap.to(device=device)
 
                     pre = model(input_ids, masks, entityPos)
 
@@ -88,7 +92,7 @@ if __name__ == "__main__":
 
                         total = total + realNum * realNum
                         correct = correct + torch.sum(pre_i == labelMap_i)
-                pbar_test.update(1)
+                    pbar_test.update(1)
         print(f'Epoch : {epoch}, correct={correct*100/total}%')
                         
 

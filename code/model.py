@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from utils import getFeatureMap
-# from torch_geometric.nn import GCNCnov
+from torch_geometric.nn import GCNConv
 
 
 # 每条包含以下几个部分：
@@ -237,6 +237,22 @@ class SegmetationNet(nn.Module):
         h = h[:, :, 31:31 + x.size()[2], 31:31 + x.size()[3]].contiguous()
 
         return h
+
+class GCNet(nn.Module):
+    def __init__(self, inChannels : int, outChannels : int) -> None:
+        super().__init__()
+        self.inChannels = inChannels
+        self.outChannels = outChannels
+        self.gcn1 = GCNConv(in_channels=self.inChannels, out_channels=1024)
+        self.gcn2 = GCNConv(in_channels=1024, out_channels=self.outChannels)
+    
+    def forward(self, inFeatures):  # inFeatures : (batchSize, 42, 42, 768)
+        for item in inFeatures: # item : (42, 42, 768)
+            flattenItem = torch.flatten(item, end_dim=1)
+            edges = torch.stack((torch.arange(42), torch.arange(42)))
+        pass
+
+
         
 
 
