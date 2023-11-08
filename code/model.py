@@ -246,7 +246,7 @@ class GCNet(nn.Module):
         self.gcn1 = GCNConv(in_channels=self.inChannels, out_channels=2048)
         self.gcn2 = GCNConv(in_channels=2048, out_channels=self.outChannels)
     
-    def forward(self, inFeatures):  # inFeatures : (batchSize, 42, 42, inChannels)
+    def forward(self, inFeatures):  # inFeatures : (batchSize, inChannels, 42, 42)
         batchFeatures = []
         for item in inFeatures: # item : (inChannels, 42, 42)
             permutedItem = torch.permute(item, dims=(1, 2, 0)) # permutedItem : (42, 42, inChannels)
@@ -255,7 +255,7 @@ class GCNet(nn.Module):
             out = self.gcn1(flattenItem, edges)
             out = self.gcn2(flattenItem, edges)
             batchFeatures.append(out)
-            out = torch.reshape(input=out, shape=(42, 42, self.outChannels))
+            out = torch.reshape(input=out, shape=(self.outChannels, 42, 42))
         batchFeatures = torch.stack(batchFeatures)
         return batchFeatures
 
@@ -281,5 +281,7 @@ class DocREModel(nn.Module):
         sequence_output, attention = self.encode(input_ids=input_ids, masks=masks)      
         # sequence_output : (4,max_len,768) attention : (4, 12(自注意力头的数量), max_len, max_len)
         FeatureMap = getFeatureMap(sequence_output=sequence_output, entityPos=entityPos)  #这里输出的通道数为num_class
-        logits = self.segmetation(FeatureMap)    # (batch_size, 97, 42, 42)
+        logits = self.segmetation(FeatureMap)    # (batch_size, numClass, 42, 42)
+        logits = self.gcn(logits)
+        # logits = self.linear(logits)
         return logits
