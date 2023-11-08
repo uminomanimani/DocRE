@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from utils import getFeatureMap
+from utils import getFeatureMap, getGraphEdges
 from torch_geometric.nn import GCNConv
 
 
@@ -243,31 +243,38 @@ class GCNet(nn.Module):
         super().__init__()
         self.inChannels = inChannels
         self.outChannels = outChannels
-        self.gcn1 = GCNConv(in_channels=self.inChannels, out_channels=1024)
-        self.gcn2 = GCNConv(in_channels=1024, out_channels=self.outChannels)
+        self.gcn1 = GCNConv(in_channels=self.inChannels, out_channels=2048)
+        self.gcn2 = GCNConv(in_channels=2048, out_channels=self.outChannels)
     
-    def forward(self, inFeatures):  # inFeatures : (batchSize, 42, 42, 768)
-        for item in inFeatures: # item : (42, 42, 768)
-            flattenItem = torch.flatten(item, end_dim=1)
-            edges = torch.stack((torch.arange(42), torch.arange(42)))
-        pass
-
-
-        
+    def forward(self, inFeatures):  # inFeatures : (batchSize, 42, 42, inChannels)
+        batchFeatures = []
+        for item in inFeatures: # item : (inChannels, 42, 42)
+            permutedItem = torch.permute(item, dims=(1, 2, 0)) # permutedItem : (42, 42, inChannels)
+            flattenItem = torch.flatten(permutedItem, end_dim=1)
+            edges = getGraphEdges(size=(permutedItem.shape[0], permutedItem.shape[1]))
+            out = self.gcn1(flattenItem, edges)
+            out = self.gcn2(flattenItem, edges)
+            batchFeatures.append(out)
+            out = torch.reshape(input=out, shape=(42, 42, self.outChannels))
+        batchFeatures = torch.stack(batchFeatures)
+        return batchFeatures
 
 
 
 class DocREModel(nn.Module):
-    def __init__(self, bert, config) -> None:
+    def __init__(self, bert, config, numClass) -> None:
         super().__init__()
         self.bert = bert
         self.config = config
+        self.numClass = numClass
 
         for param in self.bert.parameters():
             param.requires_grad = False
         
         self.encode = Encode(bert=self.bert, config=config)
-        self.segmetation = SegmetationNet(num_class=97)
+        self.segmetation = SegmetationNet(num_class=1024)
+        self.gcn = GCNet(inChannels=1024, outChannels=512)
+        self.linear = nn.Linear(in_features=512, out_features=numClass)
 
     
     def forward(self, input_ids, masks, entityPos):

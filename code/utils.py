@@ -66,3 +66,21 @@ def getLabelMap(labels, hts):
     labelMaps = torch.stack(labelMaps)
     labelMaps = labelMaps.to(dtype=torch.float)
     return labelMaps
+
+def getGraphEdges(size):
+    edges = [[],[]]
+    for i in range(size[0]):
+        for j in range(size[1]):
+            if i - 1 >= 0: # 不是最上边儿的元素
+                edges[0].append(i * size[0] + j)
+                edges[1].append((i - 1) * size[0])
+            if i + 1 < size[0]: # 不是最下边儿的元素
+                edges[0].append(i * size[0] + j)
+                edges[1].append((i + 1) * size[0] + j)
+            if j - 1 >= 0: # 不是最左边儿的元素
+                edges[0].append(i * size[0] + j)
+                edges[1].append(i * size[0] + j - 1)
+            if j + 1 < size[1]: #不是最右边儿的元素
+                edges[0].append(i * size[0] + j)
+                edges[1].append(i * size[0] + j + 1)
+    return torch.tensor(edges, dtype=torch.long)
