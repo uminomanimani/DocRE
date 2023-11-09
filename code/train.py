@@ -13,7 +13,7 @@ from model import DocREModel, collate_fn
 if __name__ == "__main__":
     tokenizer = AutoTokenizer.from_pretrained('bert-base-cased')
 
-    config = AutoConfig.from_pretrained('bert-base-cased', num_labels=97)
+    config = AutoConfig.from_pretrained('bert-base-cased') #num_labels ? 
     config.cls_token_id = tokenizer.cls_token_id
     config.sep_token_id = tokenizer.sep_token_id
     
@@ -25,16 +25,16 @@ if __name__ == "__main__":
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     bert = bert.to(device)
 
-    trainBatchSize = 4
+    trainBatchSize = 32
     testBatchSize = 16
 
     trainDataset = DocREDataset('../data/train_annotated.json', tokenizer=tokenizer)
     trainDataloader = DataLoader(dataset=trainDataset, batch_size=trainBatchSize, collate_fn=collate_fn, shuffle=True)
 
-    testDataset = DocREDataset('../data/test.json', tokenizer=tokenizer)
+    testDataset = DocREDataset('../data/dev.json', tokenizer=tokenizer)
     testDataloader = DataLoader(dataset=testDataset, batch_size=testBatchSize, collate_fn=collate_fn, shuffle=True)
 
-    model = DocREModel(bert, config)
+    model = DocREModel(bert, config, numClass=97)
     loss_fn = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-6, weight_decay=5e-5)
     epochs = 500
@@ -70,6 +70,9 @@ if __name__ == "__main__":
 
                 total = 0
                 correct = 0
+                
+                truePos = 0
+                falseNeg = 0
 
                 for batch in testDataloader:
                     input_ids, masks, entityPos = batch[0], batch[1], batch[3]
@@ -82,18 +85,24 @@ if __name__ == "__main__":
                     masks = masks.to(device=device)
                     labelMap = labelMap.to(device=device)
 
-                    pre = model(input_ids, masks, entityPos)
+                    pre = model(input_ids, masks, entityPos) # (batchsize, 97, 42, 42)
 
                     for i in range(len(input_ids)):
                         realNum = math.ceil(math.sqrt(len(labels[i])))
 
                         labelMap_i = labelMap[i][: realNum, : realNum]
-                        pre_i = pre[i][: realNum, realNum]
+                        # pre_i = pre[i][: realNum, : realNum]
+                        pre_i = torch.max(pre[i], dim=0)[1][: realNum, : realNum]
 
                         total = total + realNum * realNum
                         correct = correct + torch.sum(pre_i == labelMap_i)
+                        
+                        truePos += torch.sum((labelMap_i != 0) & (labelMap_i == pre_i)).item()
+                        falseNeg += torch.sum((labelMap_i != 0) & (labelMap_i != pre_i)).item()
+                        
+                        
                     pbar_test.update(1)
-        print(f'Epoch : {epoch}, correct={correct*100/total}%')
+        print(f'Epoch : {epoch}, correct={correct*100/total}%, recall={truePos*100/(truePos+falseNeg)}%.')
                         
 
 
