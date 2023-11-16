@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from utils import getFeatureMap, getGraphEdges
+from utils import getFeatureMap, getGraphEdges, getEntityEmbeddings
 from torch_geometric.nn import GCNConv
 
 
@@ -268,21 +268,85 @@ class DocREModel(nn.Module):
         self.bert = bert
         self.config = config
         self.numClass = numClass
+        self.featureDim = 256
+        self.headLinear = nn.Linear(in_features=768, out_features=self.featureDim)
+        self.tailLinear = nn.Linear(in_features=768, out_features=self.featureDim)
+        
+        self.bilinear = nn.Bilinear(in1_features=self.featureDim, in2_features=self.featureDim, out_features=numClass)
 
         for param in self.bert.parameters():
             param.requires_grad = False
         
         self.encode = Encode(bert=self.bert, config=config)
-        self.segmetation = SegmetationNet(num_class=97)
-        self.gcn = GCNet(inChannels=1024, outChannels=numClass)
-        # self.linear = nn.Linear(in_features=512, out_features=numClass)
+        self.segmetation = SegmetationNet(num_class=128)
+        self.gcn = GCNet(inChannels=128, outChannels=self.featureDim)
 
     
-    def forward(self, input_ids, masks, entityPos):
+    def forward(self, input_ids, masks, entityPos, headTailPairs):
         sequence_output, attention = self.encode(input_ids=input_ids, masks=masks)      
         # sequence_output : (4,max_len,768) attention : (4, 12(自注意力头的数量), max_len, max_len)
-        FeatureMap = getFeatureMap(sequence_output=sequence_output, entityPos=entityPos)  #这里输出的通道数为num_class
-        logits = self.segmetation(FeatureMap)    # (batch_size, numClass, 42, 42)
-        # logits = self.gcn(logits)
-        # logits = self.linear(logits)
+        batchEntityEmb = getEntityEmbeddings(sequence_output=sequence_output, entityPos=entityPos)
+        FeatureMap = getFeatureMap(sequence_output=sequence_output, batchEntityEmbeddings=batchEntityEmb)  #这里输出的通道数为num_class
+        output = self.segmetation(FeatureMap)    # (batch_size, numClass, 42, 42)
+        output = self.gcn(output)
+        output = torch.permute(output, dims=(0, 2, 3, 1))
+        
+        # return output
+        
+        headTailPairEmb = []
+        headEmbs = []
+        tailEmbs = []
+        for i in range(len(headTailPairs)):
+            headTailPair = headTailPairs[i]
+            entityEmb = batchEntityEmb[i] # 这个是实体的embedding，按照出现的顺序排列的
+            for (h, t) in headTailPair:
+                headTailPairEmb.append(output[i][h, t])
+                headEmbs.append(entityEmb[h])
+                tailEmbs.append(entityEmb[t])
+        headTailPairEmb = torch.stack(headTailPairEmb, dim=0)
+        headEmbs = torch.stack(headEmbs, dim=0)
+        tailEmbs = torch.stack(tailEmbs, dim=0)
+        
+        zs = torch.tanh(self.headLinear(headEmbs) + headTailPairEmb)
+        zo = torch.tanh(self.tailLinear(tailEmbs) + headTailPairEmb)
+        
+        # del headTailPairEmb, headEmbs, tailEmbs, output, sequence_output
+        
+        logits = self.bilinear(zs, zo)
+        
         return logits
+
+    
+def multilabel_categorical_crossentropy(y_true, y_pred):
+    y_pred = (1 - 2 * y_true) * y_pred
+    y_pred_neg = y_pred - y_true * 1e30
+    y_pred_pos = y_pred - (1 - y_true) * 1e30
+    zeros = torch.zeros_like(y_pred[..., :1])
+    y_pred_neg = torch.cat([y_pred_neg, zeros],dim=-1)
+    y_pred_pos = torch.cat((y_pred_pos, zeros),dim=-1)
+    neg_loss = torch.logsumexp(y_pred_neg, axis=-1)
+    pos_loss = torch.logsumexp(y_pred_pos, axis=-1)
+    return neg_loss + pos_loss
+
+
+class balanced_loss(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, logits, labels):
+        loss = multilabel_categorical_crossentropy(labels,logits)
+        loss = loss.mean()
+        return loss
+
+    def get_label(self, logits, num_labels=-1):
+        th_logit = torch.zeros_like(logits[..., :1]) #(1310, 1)
+        output = torch.zeros_like(logits).to(logits) #(1310,97)
+        mask = (logits > th_logit) # mask是logits中大于0的那些值，0：大于0；1：小于0，(1310, 97)
+        if num_labels > 0:
+            top_v, _ = torch.topk(logits, num_labels, dim=1) #获得logits的97个值中前num_labels个值,降序排列 (1310, num_labels)
+            top_v = top_v[:, -1] #获得最小那个, (1310)
+            mask = (logits >= top_v.unsqueeze(1)) & mask # logits >= top_v.unsqueeze(1) 这个是在求哪些是大于前num_labels个值中最小的那个值
+        output[mask] = 1.0
+        output[:, 0] = (output[:,1:].sum(1) == 0.).to(logits)
+
+        return output #其中只有最大的num_labels个元素对应的位置被设置为1，其余位置为0。

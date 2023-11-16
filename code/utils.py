@@ -2,7 +2,7 @@ import torch
 from allennlp.modules.matrix_attention import DotProductMatrixAttention, CosineMatrixAttention, BilinearMatrixAttention
 import numpy as np
 
-def getFeatureMap(sequence_output, entityPos):
+def getEntityEmbeddings(sequence_output, entityPos):
     assert(len(sequence_output) == len(entityPos))
     maxSeqLenOfABatch = sequence_output.shape[1]
     batchSize = len(entityPos)
@@ -32,6 +32,10 @@ def getFeatureMap(sequence_output, entityPos):
             entityEmbeddings.append(entityEmbedding)
         entityEmbeddings = torch.stack(entityEmbeddings)
         batchEntityEmbeddings.append(entityEmbeddings) # batchEntityEmbeddings每个元素的形状应该是：[entityNum, 768]
+    return batchEntityEmbeddings
+
+def getFeatureMap(sequence_output, batchEntityEmbeddings):
+    # batchEntityEmbeddings = getEntityEmbeddings(sequence_output, entityPos)
     
     b, _, d = sequence_output.shape
     ent_encode = sequence_output.new_zeros(b, 42, d)

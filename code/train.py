@@ -4,10 +4,11 @@ from torch.utils.data import DataLoader
 from transformers import AutoConfig, AutoModel, AutoTokenizer
 from tqdm import tqdm
 import math
+from datetime import datetime
 
 from docre_data import DocREDataset
 from utils import  getLabelMap
-from model import DocREModel, collate_fn
+from model import DocREModel, collate_fn, balanced_loss
 
 
 if __name__ == "__main__":
@@ -23,6 +24,7 @@ if __name__ == "__main__":
         config=config,
     )
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+    print(f'the fucking device is {device}.')
     bert = bert.to(device)
 
     trainBatchSize = 32
@@ -35,9 +37,10 @@ if __name__ == "__main__":
     testDataloader = DataLoader(dataset=testDataset, batch_size=testBatchSize, collate_fn=collate_fn, shuffle=True)
 
     model = DocREModel(bert, config, numClass=97)
-    loss_fn = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-6, weight_decay=5e-5)
-    epochs = 500
+    # loss_fn = nn.CrossEntropyLoss()
+    loss_fn = balanced_loss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-5, weight_decay=5e-5)
+    epochs = 200
 
     for epoch in range(epochs):
         total_loss = 0
@@ -47,22 +50,35 @@ if __name__ == "__main__":
             for batch in trainDataloader:
                 input_ids, masks, entityPos = batch[0], batch[1], batch[3]
                 labels, hts = batch[2], batch[4]
-                labelMap = getLabelMap(labels=labels, hts=hts) # (4,97,42,42)
-                _, labelMap = torch.max(labelMap, dim=1)
+                labelList = []
+                for i in labels:
+                    for j in i:
+                        labelList.append(torch.tensor(j))
+                
+                labels = torch.stack(labelList)
+                
 
                 input_ids = input_ids.to(device=device)
                 masks = masks.to(device=device)
-                labelMap = labelMap.to(device=device)
+                labels = labels.to(device=device)
                 
-                logits = model(input_ids, masks, entityPos) # (4,97,42,42)
-                loss = loss_fn(logits, labelMap)
+                optimizer.zero_grad()
+                
+                logits = model(input_ids, masks, entityPos, headTailPairs=hts) # (n, 97)
+                # logits = torch.permute(logits, dims=(0, 2, 3, 1)) #(4, 42, 42, 97)
+                
+                loss = loss_fn(logits, labels)
                 total_loss += loss.item()
 
                 loss.backward()
                 optimizer.step()
                 pbar_train.update(1)
                 pass
-        print(f'Epoch : {epoch}, loss={total_loss}')
+        current_time = datetime.now()
+        formatted_time = current_time.strftime("%Y-%m-%d %H:%M:%S")
+        with open('result.log', 'a') as f:
+            print(f'{formatted_time}, Epoch : {epoch}, loss={total_loss}', file=f)
+        print(f'{formatted_time}, Epoch : {epoch}, loss={total_loss}')
 
         with tqdm(total=len(testDataloader), desc=f'Epoch {epoch}/{epochs} test') as pbar_test:
             model.eval()
@@ -77,32 +93,33 @@ if __name__ == "__main__":
                 for batch in testDataloader:
                     input_ids, masks, entityPos = batch[0], batch[1], batch[3]
                     labels, hts = batch[2], batch[4]
-                    labelMap = getLabelMap(labels=labels, hts=hts)
-                    _, labelMap = torch.max(labelMap, dim=1)
-                    # model = model.to('cpu')
+                    labelList = []
+                    for i in labels:
+                        for j in i:
+                            labelList.append(torch.tensor(j))
+                    labels = torch.stack(labelList)
 
                     input_ids = input_ids.to(device=device)
                     masks = masks.to(device=device)
-                    labelMap = labelMap.to(device=device)
+                    labels = labels.to(device=device)
 
-                    pre = model(input_ids, masks, entityPos) # (batchsize, 97, 42, 42)
+                    pre = model(input_ids, masks, entityPos, headTailPairs=hts)
 
-                    for i in range(len(input_ids)):
-                        realNum = math.ceil(math.sqrt(len(labels[i])))
-
-                        labelMap_i = labelMap[i][: realNum, : realNum]
-                        # pre_i = pre[i][: realNum, : realNum]
-                        pre_i = torch.max(pre[i], dim=0)[1][: realNum, : realNum]
-
-                        total = total + realNum * realNum
-                        correct = correct + torch.sum(pre_i == labelMap_i)
-                        
-                        truePos += torch.sum((labelMap_i != 0) & (labelMap_i == pre_i)).item()
-                        falseNeg += torch.sum((labelMap_i != 0) & (labelMap_i != pre_i)).item()
+                    total = total + len(labels)
+                    labels = torch.max(labels, dim=1)[1]
+                    pre = torch.max(pre, dim=1)[1]
+                    correct = correct + torch.sum(labels == pre)
+                    
+                    truePos += torch.sum((labels != 0) & (labels == pre)).item()
+                    falseNeg += torch.sum((labels != 0) & (labels != pre)).item()
                         
                         
                     pbar_test.update(1)
-        print(f'Epoch : {epoch}, correct={correct*100/total}%, recall={truePos*100/(truePos+falseNeg)}%.')
+        current_time = datetime.now()
+        formatted_time = current_time.strftime("%Y-%m-%d %H:%M:%S")
+        with open('result.log', 'a') as f:
+            print(f'{formatted_time}, Epoch : {epoch}, correct={correct*100/total}%, recall={truePos*100/(truePos+falseNeg)}%.', file=f)
+        print(f'{formatted_time}, Epoch : {epoch}, correct={correct*100/total}%, recall={truePos*100/(truePos+falseNeg)}%.')
                         
 
 
