@@ -82,12 +82,9 @@ if __name__ == "__main__":
 
         with tqdm(total=len(testDataloader), desc=f'Epoch {epoch}/{epochs} test') as pbar_test:
             model.eval()
-            with torch.no_grad():
-
-                total = 0
-                correct = 0
-                
+            with torch.no_grad():                
                 truePos = 0
+                falsePos = 0
                 falseNeg = 0
 
                 for batch in testDataloader:
@@ -105,21 +102,22 @@ if __name__ == "__main__":
 
                     pre = model(input_ids, masks, entityPos, headTailPairs=hts)
 
-                    total = total + len(labels)
                     labels = torch.max(labels, dim=1)[1]
                     pre = torch.max(pre, dim=1)[1]
-                    correct = correct + torch.sum(labels == pre)
                     
                     truePos += torch.sum((labels != 0) & (labels == pre)).item()
                     falseNeg += torch.sum((labels != 0) & (labels != pre)).item()
-                        
+                    falsePos += torch.sum((labels == 0) & (labels != pre)).item()
                         
                     pbar_test.update(1)
+        precision = truePos / (truePos + falsePos)
+        recall = truePos / (truePos + falseNeg)
+        f1 = 2 * (precision * recall) / (precision + recall)
         current_time = datetime.now()
         formatted_time = current_time.strftime("%Y-%m-%d %H:%M:%S")
         with open('result.log', 'a') as f:
-            print(f'{formatted_time}, Epoch : {epoch}, correct={correct*100/total}%, recall={truePos*100/(truePos+falseNeg)}%.', file=f)
-        print(f'{formatted_time}, Epoch : {epoch}, correct={correct*100/total}%, recall={truePos*100/(truePos+falseNeg)}%.')
+            print(f'{formatted_time}, Epoch : {epoch}, precision = {precision * 100}%, recall = {recall * 100}%, f1 = {f1 * 100}%', file=f)
+        print(f'{formatted_time}, Epoch : {epoch}, precision = {precision * 100}%, recall = {recall * 100}%, f1 = {f1 * 100}%')
                         
 
 
