@@ -28,7 +28,7 @@ if __name__ == "__main__":
     bert = bert.to(device)
 
     trainBatchSize = 32
-    testBatchSize = 16
+    testBatchSize = 32
 
     trainDataset = DocREDataset('../data/train_annotated.json', tokenizer=tokenizer)
     trainDataloader = DataLoader(dataset=trainDataset, batch_size=trainBatchSize, collate_fn=collate_fn, shuffle=True)
