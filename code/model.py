@@ -5,6 +5,8 @@ import torch.nn.functional as F
 from utils import getFeatureMap, getGraphEdges, getEntityEmbeddings
 from torch_geometric.nn import GCNConv
 
+from Segmentation import FCN8s as SegmentationNet
+
 
 # 每条包含以下几个部分：
 # input_ids:单词转为token的列表，长度和文章长度相同
@@ -111,140 +113,15 @@ class Encode:
         return sequence_output, attention 
 
 
-class SegmetationNet(nn.Module):
-    def __init__(self, num_class : int) -> None:
-        super().__init__()
-        self.in_channels = 3
-        self.num_class = num_class
 
-        # conv1
-        self.conv1_1 = nn.Conv2d(3, 64, 3, padding=100)
-        self.relu1_1 = nn.ReLU(inplace=True)
-        self.conv1_2 = nn.Conv2d(64, 64, 3, padding=1)
-        self.relu1_2 = nn.ReLU(inplace=True)
-        self.pool1 = nn.MaxPool2d(2, stride=2, ceil_mode=True)  # 1/2
-
-        # conv2
-        self.conv2_1 = nn.Conv2d(64, 128, 3, padding=1)
-        self.relu2_1 = nn.ReLU(inplace=True)
-        self.conv2_2 = nn.Conv2d(128, 128, 3, padding=1)
-        self.relu2_2 = nn.ReLU(inplace=True)
-        self.pool2 = nn.MaxPool2d(2, stride=2, ceil_mode=True)  # 1/4
-
-        # conv3
-        self.conv3_1 = nn.Conv2d(128, 256, 3, padding=1)
-        self.relu3_1 = nn.ReLU(inplace=True)
-        self.conv3_2 = nn.Conv2d(256, 256, 3, padding=1)
-        self.relu3_2 = nn.ReLU(inplace=True)
-        self.conv3_3 = nn.Conv2d(256, 256, 3, padding=1)
-        self.relu3_3 = nn.ReLU(inplace=True)
-        self.pool3 = nn.MaxPool2d(2, stride=2, ceil_mode=True)  # 1/8
-
-        # conv4
-        self.conv4_1 = nn.Conv2d(256, 512, 3, padding=1)
-        self.relu4_1 = nn.ReLU(inplace=True)
-        self.conv4_2 = nn.Conv2d(512, 512, 3, padding=1)
-        self.relu4_2 = nn.ReLU(inplace=True)
-        self.conv4_3 = nn.Conv2d(512, 512, 3, padding=1)
-        self.relu4_3 = nn.ReLU(inplace=True)
-        self.pool4 = nn.MaxPool2d(2, stride=2, ceil_mode=True)  # 1/16
-
-        # conv5
-        self.conv5_1 = nn.Conv2d(512, 512, 3, padding=1)
-        self.relu5_1 = nn.ReLU(inplace=True)
-        self.conv5_2 = nn.Conv2d(512, 512, 3, padding=1)
-        self.relu5_2 = nn.ReLU(inplace=True)
-        self.conv5_3 = nn.Conv2d(512, 512, 3, padding=1)
-        self.relu5_3 = nn.ReLU(inplace=True)
-        self.pool5 = nn.MaxPool2d(2, stride=2, ceil_mode=True)  # 1/32
-
-        # fc6
-        self.fc6 = nn.Conv2d(512, 4096, 7)
-        self.relu6 = nn.ReLU(inplace=True)
-        self.drop6 = nn.Dropout2d()
-
-        # fc7
-        self.fc7 = nn.Conv2d(4096, 4096, 1)
-        self.relu7 = nn.ReLU(inplace=True)
-        self.drop7 = nn.Dropout2d()
-
-        self.score_fr = nn.Conv2d(4096, self.num_class, 1)
-        self.score_pool3 = nn.Conv2d(256, self.num_class, 1)
-        self.score_pool4 = nn.Conv2d(512, self.num_class, 1)
-
-        self.upscore2 = nn.ConvTranspose2d(
-            self.num_class, self.num_class, 4, stride=2, bias=False)
-        self.upscore8 = nn.ConvTranspose2d(
-            self.num_class, self.num_class, 16, stride=8, bias=False)
-        self.upscore_pool4 = nn.ConvTranspose2d(
-            self.num_class, self.num_class, 4, stride=2, bias=False)
-    
-    def forward(self, x):
-        h = x  # (batch_size,3,42,42)
-        h = self.relu1_1(self.conv1_1(h)) # (batch_size,64,240,240)
-        h = self.relu1_2(self.conv1_2(h)) # (batch_size,64,240,240)
-        h = self.pool1(h) # (batch_size,64,120,120)
-
-        h = self.relu2_1(self.conv2_1(h)) # (batch_size,128,120,120)
-        h = self.relu2_2(self.conv2_2(h)) # (batch_size,128,120,120)
-        h = self.pool2(h) # (batch_size,128,60,60)
-
-        h = self.relu3_1(self.conv3_1(h)) # (batch_size,256,60,60)
-        h = self.relu3_2(self.conv3_2(h)) # (batch_size,256,60,60)
-        h = self.relu3_3(self.conv3_3(h)) # (batch_size,256,60,60)
-        h = self.pool3(h) # (batch_size,256,30,30)
-        pool3 = h  # 1/8，这里pool3的形状是原图的1/8
-
-        h = self.relu4_1(self.conv4_1(h))
-        h = self.relu4_2(self.conv4_2(h))
-        h = self.relu4_3(self.conv4_3(h))
-        h = self.pool4(h) # (batch_size,512,15,15)
-        pool4 = h  # 1/16 # (batch_size,512,15,15)
-
-        h = self.relu5_1(self.conv5_1(h))
-        h = self.relu5_2(self.conv5_2(h))
-        h = self.relu5_3(self.conv5_3(h))
-        h = self.pool5(h) # (batch_size,512,8,8)
-
-        h = self.relu6(self.fc6(h))
-        h = self.drop6(h)
-
-        h = self.relu7(self.fc7(h))
-        h = self.drop7(h)
-
-        h = self.score_fr(h)
-        h = self.upscore2(h)
-        upscore2 = h  # 1/16 # (batch_size,97,6,6)
-
-        h = self.score_pool4(pool4) # (batch_size,512,15,15)
-        # s = upscore2.size()
-        h = h[:, :, 5:5 + upscore2.size()[2], 5:5 + upscore2.size()[3]] # (batch_size,79,6,6)
-        score_pool4c = h  # 1/16
-
-        h = upscore2 + score_pool4c  # 1/16
-        h = self.upscore_pool4(h)
-        upscore_pool4 = h  # 1/8
-
-        h = self.score_pool3(pool3)
-        h = h[:, :,
-              9:9 + upscore_pool4.size()[2],
-              9:9 + upscore_pool4.size()[3]]
-        score_pool3c = h  # 1/8
-
-        h = upscore_pool4 + score_pool3c  # 1/8
-
-        h = self.upscore8(h)
-        h = h[:, :, 31:31 + x.size()[2], 31:31 + x.size()[3]].contiguous()
-
-        return h
 
 class GCNet(nn.Module):
     def __init__(self, inChannels : int, outChannels : int) -> None:
         super().__init__()
         self.inChannels = inChannels
         self.outChannels = outChannels
-        self.gcn1 = GCNConv(in_channels=self.inChannels, out_channels=2048)
-        self.gcn2 = GCNConv(in_channels=2048, out_channels=self.outChannels)
+        self.gcn1 = GCNConv(in_channels=self.inChannels, out_channels=128)
+        self.gcn2 = GCNConv(in_channels=128, out_channels=self.outChannels)
     
     def forward(self, inFeatures):  # inFeatures : (batchSize, inChannels, 42, 42)
         batchFeatures = []
@@ -278,8 +155,8 @@ class DocREModel(nn.Module):
             param.requires_grad = False
         
         self.encode = Encode(bert=self.bert, config=config)
-        self.segmetation = SegmetationNet(num_class=128)
-        self.gcn = GCNet(inChannels=128, outChannels=self.featureDim)
+        self.segmetation = SegmentationNet(inChannels=3, num_class=self.featureDim // 2)
+        self.gcn = GCNet(inChannels=3, outChannels=self.featureDim // 2)
 
     
     def forward(self, input_ids, masks, entityPos, headTailPairs):
@@ -287,9 +164,11 @@ class DocREModel(nn.Module):
         # sequence_output : (4,max_len,768) attention : (4, 12(自注意力头的数量), max_len, max_len)
         batchEntityEmb = getEntityEmbeddings(sequence_output=sequence_output, entityPos=entityPos)
         FeatureMap = getFeatureMap(sequence_output=sequence_output, batchEntityEmbeddings=batchEntityEmb)  #这里输出的通道数为num_class
-        output = self.segmetation(FeatureMap)    # (batch_size, numClass, 42, 42)
-        output = self.gcn(output)
-        output = torch.permute(output, dims=(0, 2, 3, 1))
+        # FeatureMap : (batchsize, 3, 42, 42)
+        s_output = self.segmetation(FeatureMap)    # (batch_size, featureDim / 2, 42, 42)
+        g_output = self.gcn(FeatureMap)     # (batch_size, featureDim / 2, 42, 42)
+        output = torch.cat((s_output, g_output), dim=1)
+        output = torch.permute(output, dims=(0, 2, 3, 1)) #(batchsize, 42, 42, self.featureDim)
         
         # return output
         
