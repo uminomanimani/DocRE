@@ -135,22 +135,22 @@ class AttentionUNet(torch.nn.Module):
     UNet, down sampling & up sampling for global reasoning
     """
 
-    def __init__(self, input_channels, class_number, **kwargs):
+    def __init__(self, inChannels, num_class, down_channel=256):
         super(AttentionUNet, self).__init__()
 
-        down_channel = kwargs['down_channel'] # default = 256
+        # down_channel = kwargs['down_channel'] # default = 256
 
         down_channel_2 = down_channel * 2
         up_channel_1 = down_channel_2 * 2
         up_channel_2 = down_channel * 2
 
-        self.inc = InConv(input_channels, down_channel)
+        self.inc = InConv(inChannels, down_channel)
         self.down1 = DownLayer(down_channel, down_channel_2)
         self.down2 = DownLayer(down_channel_2, down_channel_2)
 
         self.up1 = UpLayer(up_channel_1, up_channel_1 // 4)
         self.up2 = UpLayer(up_channel_2, up_channel_2 // 4)
-        self.outc = OutConv(up_channel_2 // 4, class_number)
+        self.outc = OutConv(up_channel_2 // 4, num_class)
 
     def forward(self, attention_channels):
         """
@@ -167,7 +167,7 @@ class AttentionUNet(torch.nn.Module):
         x = self.up2(x, x1)
         output = self.outc(x)
         # attn_map as the shape of: batch_size x width x height x class
-        output = output.permute(0, 2, 3, 1).contiguous()
+        # output = output.permute(0, 2, 3, 1).contiguous()
         return output
 
 

@@ -30,7 +30,7 @@ class Encode:
     def __init__(self, bert, config):
         self.bert = bert
         self.config = config
-        pass 
+        pass
 
     def process_long_input(self, model, input_ids, attention_mask):
         # Split the input to 2 overlapping chunks. Now BERT can encode inputs of which the length are up to 1024.
@@ -110,9 +110,7 @@ class Encode:
 
     def __call__(self, input_ids, masks):
         sequence_output, attention = self.process_long_input(self.bert, input_ids=input_ids, attention_mask=masks)
-        return sequence_output, attention 
-
-
+        return sequence_output, attention
 
 
 class GCNet(nn.Module):
@@ -122,11 +120,12 @@ class GCNet(nn.Module):
         self.outChannels = outChannels
         self.gcn1 = GCNConv(in_channels=self.inChannels, out_channels=128)
         self.gcn2 = GCNConv(in_channels=128, out_channels=self.outChannels)
-    
+        # self.weights = nn.Parameter()
+
     def forward(self, inFeatures):  # inFeatures : (batchSize, inChannels, 42, 42)
         batchFeatures = []
         for item in inFeatures: # item : (inChannels, 42, 42)
-            permutedItem = torch.permute(item, dims=(1, 2, 0)) # permutedItem : (42, 42, inChannels)
+            permutedItem = torch.permute(item, dims=(1, 2, 0)).contiguous() # permutedItem : (42, 42, inChannels)
             flattenItem = torch.flatten(permutedItem, end_dim=1)
             edges = getGraphEdges(size=(permutedItem.shape[0], permutedItem.shape[1]))
             edges = edges.to(item.device)
@@ -145,22 +144,22 @@ class DocREModel(nn.Module):
         self.bert = bert
         self.config = config
         self.numClass = numClass
-        self.featureDim = 256
+        self.featureDim = 512
         self.headLinear = nn.Linear(in_features=768, out_features=self.featureDim)
         self.tailLinear = nn.Linear(in_features=768, out_features=self.featureDim)
-        
+
         self.bilinear = nn.Bilinear(in1_features=self.featureDim, in2_features=self.featureDim, out_features=numClass)
 
-        for param in self.bert.parameters():
-            param.requires_grad = False
-        
+        # for param in self.bert.parameters():
+        #     param.requires_grad = True
+
         self.encode = Encode(bert=self.bert, config=config)
         self.segmetation = SegmentationNet(inChannels=3, num_class=self.featureDim // 2)
         self.gcn = GCNet(inChannels=3, outChannels=self.featureDim // 2)
 
-    
+
     def forward(self, input_ids, masks, entityPos, headTailPairs):
-        sequence_output, attention = self.encode(input_ids=input_ids, masks=masks)      
+        sequence_output, attention = self.encode(input_ids=input_ids, masks=masks)
         # sequence_output : (4,max_len,768) attention : (4, 12(自注意力头的数量), max_len, max_len)
         batchEntityEmb = getEntityEmbeddings(sequence_output=sequence_output, entityPos=entityPos)
         FeatureMap = getFeatureMap(sequence_output=sequence_output, batchEntityEmbeddings=batchEntityEmb)  #这里输出的通道数为num_class
@@ -168,10 +167,10 @@ class DocREModel(nn.Module):
         s_output = self.segmetation(FeatureMap)    # (batch_size, featureDim / 2, 42, 42)
         g_output = self.gcn(FeatureMap)     # (batch_size, featureDim / 2, 42, 42)
         output = torch.cat((s_output, g_output), dim=1)
-        output = torch.permute(output, dims=(0, 2, 3, 1)) #(batchsize, 42, 42, self.featureDim)
-        
+        output = torch.permute(output, dims=(0, 2, 3, 1)).contiguous() #(batchsize, 42, 42, self.featureDim)
+
         # return output
-        
+
         headTailPairEmb = []
         headEmbs = []
         tailEmbs = []
@@ -185,17 +184,17 @@ class DocREModel(nn.Module):
         headTailPairEmb = torch.stack(headTailPairEmb, dim=0)
         headEmbs = torch.stack(headEmbs, dim=0)
         tailEmbs = torch.stack(tailEmbs, dim=0)
-        
+
         zs = torch.tanh(self.headLinear(headEmbs) + headTailPairEmb)
         zo = torch.tanh(self.tailLinear(tailEmbs) + headTailPairEmb)
-        
+
         # del headTailPairEmb, headEmbs, tailEmbs, output, sequence_output
-        
+
         logits = self.bilinear(zs, zo)
-        
+
         return logits
 
-    
+
 def multilabel_categorical_crossentropy(y_true, y_pred):
     y_pred = (1 - 2 * y_true) * y_pred
     y_pred_neg = y_pred - y_true * 1e30

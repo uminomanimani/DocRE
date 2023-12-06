@@ -6,6 +6,7 @@ code/test.py
 pretrained/*
 !pretrained/.gitkeep
 *.pkl
+output/
 
 
 # Byte-compiled / optimized / DLL files

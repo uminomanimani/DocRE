@@ -65,7 +65,7 @@ def getLabelMap(labels, hts):
             h = hts[i][j][0]
             t = hts[i][j][1]
             labelMap[h, t, :] = l
-        labelMap = labelMap.permute(2, 0, 1)
+        labelMap = labelMap.permute(2, 0, 1).contiguous()
         labelMaps.append(labelMap)
     labelMaps = torch.stack(labelMaps)
     labelMaps = labelMaps.to(dtype=torch.float)

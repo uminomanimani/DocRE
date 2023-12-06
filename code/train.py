@@ -12,6 +12,8 @@ from model import DocREModel, collate_fn, balanced_loss
 
 
 if __name__ == "__main__":
+    with (open('./output/result.log', 'a')) as f:
+        print('------------------------', file=f)
     tokenizer = AutoTokenizer.from_pretrained('bert-base-cased')
 
     config = AutoConfig.from_pretrained('bert-base-cased') #num_labels ? 
@@ -27,8 +29,8 @@ if __name__ == "__main__":
     print(f'the fucking device is {device}.')
     bert = bert.to(device)
 
-    trainBatchSize = 32
-    testBatchSize = 32
+    trainBatchSize = 8
+    testBatchSize = 64
 
     trainDataset = DocREDataset('../data/train_annotated.json', tokenizer=tokenizer)
     trainDataloader = DataLoader(dataset=trainDataset, batch_size=trainBatchSize, collate_fn=collate_fn, shuffle=True)
@@ -39,8 +41,8 @@ if __name__ == "__main__":
     model = DocREModel(bert, config, numClass=97)
     # loss_fn = nn.CrossEntropyLoss()
     loss_fn = balanced_loss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-5, weight_decay=5e-5)
-    epochs = 200
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-6, weight_decay=5e-5)
+    epochs = 60
 
     for epoch in range(epochs):
         total_loss = 0
@@ -65,7 +67,7 @@ if __name__ == "__main__":
                 optimizer.zero_grad()
                 
                 logits = model(input_ids, masks, entityPos, headTailPairs=hts) # (n, 97)
-                # logits = torch.permute(logits, dims=(0, 2, 3, 1)) #(4, 42, 42, 97)
+                # logits = torch.permute(logits, dims=(0, 2, 3, 1)).contiguous() #(4, 42, 42, 97)
                 
                 loss = loss_fn(logits, labels)
                 total_loss += loss.item()
@@ -76,7 +78,7 @@ if __name__ == "__main__":
                 pass
         current_time = datetime.now()
         formatted_time = current_time.strftime("%Y-%m-%d %H:%M:%S")
-        with open('result.log', 'a') as f:
+        with open('./output/result.log', 'a') as f:
             print(f'{formatted_time}, Epoch : {epoch}, loss={total_loss}', file=f)
         print(f'{formatted_time}, Epoch : {epoch}, loss={total_loss}')
 
@@ -115,9 +117,13 @@ if __name__ == "__main__":
         f1 = 2 * (precision * recall) / (precision + recall)
         current_time = datetime.now()
         formatted_time = current_time.strftime("%Y-%m-%d %H:%M:%S")
-        with open('result.log', 'a') as f:
+        with open('./output/result.log', 'a') as f:
             print(f'{formatted_time}, Epoch : {epoch}, precision = {precision * 100}%, recall = {recall * 100}%, f1 = {f1 * 100}%', file=f)
         print(f'{formatted_time}, Epoch : {epoch}, precision = {precision * 100}%, recall = {recall * 100}%, f1 = {f1 * 100}%')
+        
+        if (epoch + 1) % 5 == 0:
+            model = model.to('cpu')
+            torch.save(model, f'./output/model/epoch={epoch}.pth')
                         
 
 
